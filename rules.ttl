@@ -1,0 +1,105 @@
+@prefix : <http://elevator.com/ontology#> .
+@prefix rule: <http://example.com/rules#> .
+
+# 配合关系生成规则
+rule:AlignJointRule a :Rule ;
+    :condition """
+        ?panel1 :hasFace ?face1 ;
+                :name ?name1 .
+        ?panel2 :hasFace ?face2 ;
+                :name ?name2 .
+        ?face1 :faceType :InnerFace ;
+               :selectionMethod :ParallXZNearest .
+        ?face2 :faceType :InnerFace ;
+               :selectionMethod :ParallXZNearest .
+    """ ;
+    :action """
+        INSERT {
+            _:joint a :Joint ;
+                    :jointType :Align ;
+                    :part1 ?panel1 ;
+                    :part2 ?panel2 ;
+                    :name CONCAT(?name1, "-", ?name2, "-平齐") ;
+                    :select_m1 :ParallXZNearest ;
+                    :select_m2 :ParallXZNearest .
+        }
+    """ ;
+    :priority 1 .
+
+rule:ContactJointRule a :Rule ;
+    :condition """
+        ?panel1 :hasFace ?face1 ;
+                :name ?name1 .
+        ?panel2 :hasFace ?face2 ;
+                :name ?name2 .
+        ?face1 :faceType :RightFace ;
+               :selectionMethod :ParallFarthestYZ .
+        ?face2 :faceType :LeftFace ;
+               :selectionMethod :ParallYZNearest .
+    """ ;
+    :action """
+        INSERT {
+            _:joint a :Joint ;
+                    :jointType :Contact ;
+                    :part1 ?panel1 ;
+                    :part2 ?panel2 ;
+                    :name CONCAT(?name1, "-", ?name2, "-接触") ;
+                    :select_m1 :ParallFarthestYZ ;
+                    :select_m2 :ParallYZNearest .
+        }
+    """ ;
+    :priority 2 .
+
+# 尺寸计算规则
+rule:ThicknessRule a :Rule ;
+    :condition "$context.cabinet_height <= 2300" ;
+    :action """
+        INSERT {
+            ?panel :thickness 1.3 ;
+                   :bendHeight 25 .
+        }
+        WHERE { ?panel a :WallPanel }
+    """ ;
+    :priority 3 .
+
+rule:BoltHoleCountRule a :Rule ;
+    :condition """
+        ?panel :height ?height .
+    """ ;
+    :action """
+        INSERT {
+            ?panel :boltHoleCount CEIL(?height / 300) * 2
+        }
+    """ ;
+    :priority 4 .
+
+rule:ReinforcementRule a :Rule ;
+    :condition """
+        ?panel :width ?width .
+    """ ;
+    :action """
+        INSERT {
+            ?panel :reinforcementCount 
+                IF(?width > 500, 2,
+                   IF(?width > 300, 1, 0))
+        }
+    """ ;
+    :priority 5 .
+
+# 设计变更规则
+rule:WidthChangeRule a :Rule ;
+    :condition "$context.cabinet_width > 2100" ;
+    :action """
+        DELETE { 
+            :MiddlePanel :name "中间后壁" 
+        }
+        INSERT {
+            :MiddlePanel1 :name "中间后壁" ;
+                          :width 700 ;
+                          :position "left" .
+            :MiddlePanel2 :name "中间后壁001" ;
+                          :width 700 ;
+                          :position "right" .
+        }
+    """ ;
+    :priority 6 .
