@@ -1,174 +1,141 @@
-# examples/elevator_panel_simplified/definitions/nodes.yaml
+# examples/elevator_panel_simplified/definitions/nodes.yaml (Refactored)
+# Root is a list of node definitions
 
-nodes:
-  # Node 1: Initialize Rear Wall Assembly and basic Panel structures
-  - id: "ex:InitializeRearWallNode"
-    type: "AtomicNode"
-    label: "Initialize Rear Wall Assembly and Panels"
-    description: "Creates RearWallAssembly and basic ElevatorPanel instances with initial dimensions based on car internal size."
-    inputs:
-      - name: "car_internal_width" # This will be a top-level input to the workflow
-        maps_to_rdf_property: "ex:carInternalWidth" # Will be set on the workflow instance context
-        data_type: "integer"
-        is_required: true
-      - name: "car_internal_height" # Top-level input
-        maps_to_rdf_property: "ex:carInternalHeight" # Will be set on the workflow instance context
-        data_type: "integer"
-        is_required: true
-      - name: "workflow_instance_uri" # Special input: URI of the current kce:WorkflowInstanceData
-        maps_to_rdf_property: "kce:instanceURI" # Convention for script to know its context
-        data_type: "anyURI" # rdflib will treat this as URIRef
-        is_required: true
-    outputs:
-      # This script will create :RearWallAssembly and :ElevatorPanel instances in the RDF graph.
-      # It might output the URI of the created :RearWallAssembly for subsequent nodes.
-      - name: "rear_wall_assembly_uri"
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI" # Property on workflow_instance_uri
-        data_type: "anyURI"
-    invocation:
-      type: "PythonScript"
-      # Path relative to this YAML file's directory OR --base-script-path
-      script_path: "../scripts/init_rear_wall.py"
-      argument_passing_style: "commandline" # Script will get inputs as command line args
+- uri: "ex:InitializeRearWallNode"
+  kind: "AtomicNode"
+  name: "Initialize Rear Wall Assembly and Panels"
+  description: "Creates RearWallAssembly and basic ElevatorPanel instances with initial dimensions based on car internal size."
+  precondition: "ASK { }" # No specific graph precondition, inputs assumed available via context
+  effect: "Creates domain:RearWallAssembly. Creates domain:ElevatorPanel instances linked to the assembly. Sets ex:createdRearWallAssemblyURI on a context entity (e.g., the run context)."
+  inputs:
+    - name: "car_internal_width"
+      mapsToRdfProperty: "ex:carInternalWidth" # From initial state RDF
+      datatype: "xsd:integer"
+      isRequired: true
+    - name: "car_internal_height"
+      mapsToRdfProperty: "ex:carInternalHeight" # From initial state RDF
+      datatype: "xsd:integer"
+      isRequired: true
+    - name: "run_context_uri" # Provided by Planner/Executor
+      mapsToRdfProperty: "ex:runContextForNode" # A property on a temporary context for this node run
+      datatype: "xsd:anyURI"
+      isRequired: true
+  outputs:
+    - name: "rear_wall_assembly_uri"
+      mapsToRdfProperty: "ex:createdRearWallAssemblyURI" # To be set on the run_context_uri by the script
+      datatype: "xsd:anyURI"
+  implementation:
+    type: "kce:PythonScriptInvocation" # Use the URI from ontology
+    scriptPath: "../scripts/init_rear_wall.py"
 
-  # Node 2: Calculate detailed dimensions for a single panel (thickness, bending height, final width)
-  # This node might be called multiple times, once for each panel, or the script handles all panels.
-  # For MVP, let's assume the script can find all panels linked to an assembly.
-  - id: "ex:CalculatePanelDetailsNode"
-    type: "AtomicNode"
-    label: "Calculate Individual Panel Details"
-    description: "Calculates thickness, bending height, and final width for all panels in an assembly."
-    inputs:
-      - name: "rear_wall_assembly_uri" # URI of the :RearWallAssembly instance
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI" # From previous node's output (on workflow context)
-        data_type: "anyURI"
-        is_required: true
-      # The script will query the RDF store for carInternalHeight/Width associated with the assembly
-      # and find all :ElevatorPanel instances linked via ex:hasPanelPart.
-    outputs:
-      # This script modifies existing :ElevatorPanel instances by adding:
-      # ex:panelThickness, ex:bendingHeight, ex:panelWidth
-      - name: "panels_details_calculated_flag" # A flag to indicate completion
-        maps_to_rdf_property: "ex:panelDetailsCalculated" # On the RearWallAssembly
-        data_type: "boolean"
-    invocation:
-      type: "PythonScript"
-      script_path: "../scripts/calculate_panel_details.py"
-      argument_passing_style: "commandline"
+- uri: "ex:CalculatePanelDetailsNode"
+  kind: "AtomicNode"
+  name: "Calculate Individual Panel Details"
+  description: "Calculates thickness, bending height, and final width for all panels in an assembly."
+  precondition: | # Example: assembly must exist and its URI known
+    PREFIX ex: <http://example.com/ns#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX domain: <http://kce.com/example/elevator_panel#>
+    ASK { ?run_context ex:createdRearWallAssemblyURI ?assembly_uri .
+          ?assembly_uri rdf:type domain:RearWallAssembly . }
+  effect: "Modifies domain:ElevatorPanel instances by adding ex:panelThickness, ex:bendingHeight, ex:panelWidth. Sets ex:panelDetailsCalculated on the assembly."
+  inputs:
+    - name: "rear_wall_assembly_uri"
+      mapsToRdfProperty: "ex:createdRearWallAssemblyURI" # From run_context
+      datatype: "xsd:anyURI"
+      isRequired: true
+  outputs:
+    - name: "panels_details_calculated_flag"
+      mapsToRdfProperty: "ex:panelDetailsCalculated" # On the RearWallAssembly
+      datatype: "xsd:boolean"
+  implementation:
+    type: "kce:PythonScriptInvocation"
+    scriptPath: "../scripts/calculate_panel_details.py"
 
-  # Node 3: Calculate Bolt Holes for panels
-  # Assumes panel height is already set on :ElevatorPanel instances.
-  - id: "ex:CalculateBoltHolesNode"
-    type: "AtomicNode"
-    label: "Calculate Bolt Holes for Panels"
-    description: "Calculates the number of bolt holes for all panels in an assembly."
-    inputs:
-      - name: "rear_wall_assembly_uri"
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI"
-        data_type: "anyURI"
-        is_required: true
-      # Script queries for all panels linked to the assembly and their heights.
-    outputs:
-      # Modifies :ElevatorPanel instances by adding ex:boltHoleCount and ex:boltHoleDiameter
-      - name: "bolt_holes_calculated_flag"
-        maps_to_rdf_property: "ex:boltHolesCalculated" # On the RearWallAssembly
-        data_type: "boolean"
-    invocation:
-      type: "PythonScript"
-      script_path: "../scripts/calculate_bolt_holes.py"
-      argument_passing_style: "commandline"
+- uri: "ex:CalculateBoltHolesNode"
+  kind: "AtomicNode"
+  name: "Calculate Bolt Holes for Panels"
+  description: "Calculates the number of bolt holes for all panels in an assembly."
+  precondition: |
+    PREFIX ex: <http://example.com/ns#>
+    ASK { ?assembly ex:panelDetailsCalculated true . }
+  effect: "Modifies domain:ElevatorPanel by adding ex:boltHoleCount, ex:boltHoleDiameter. Sets ex:boltHolesCalculated on assembly."
+  inputs:
+    - name: "rear_wall_assembly_uri"
+      mapsToRdfProperty: "ex:createdRearWallAssemblyURI"
+      datatype: "xsd:anyURI"
+      isRequired: true
+  outputs:
+    - name: "bolt_holes_calculated_flag"
+      mapsToRdfProperty: "ex:boltHolesCalculated" # On the RearWallAssembly
+      datatype: "xsd:boolean"
+  implementation:
+    type: "kce:PythonScriptInvocation"
+    scriptPath: "../scripts/calculate_bolt_holes.py"
 
-  # Node 4: Determine Stiffeners for panels
-  # Assumes panel width is already set on :ElevatorPanel instances.
-  - id: "ex:DetermineStiffenersNode"
-    type: "AtomicNode"
-    label: "Determine Stiffeners for Panels"
-    description: "Determines the number of stiffeners for all panels in an assembly."
-    inputs:
-      - name: "rear_wall_assembly_uri"
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI"
-        data_type: "anyURI"
-        is_required: true
-      # Script queries for all panels linked to the assembly and their widths.
-    outputs:
-      # Modifies :ElevatorPanel instances by adding ex:stiffenerCount
-      - name: "stiffeners_determined_flag"
-        maps_to_rdf_property: "ex:stiffenersDetermined" # On the RearWallAssembly
-        data_type: "boolean"
-    invocation:
-      type: "PythonScript"
-      script_path: "../scripts/determine_stiffeners.py"
-      argument_passing_style: "commandline"
+- uri: "ex:DetermineStiffenersNode"
+  kind: "AtomicNode"
+  name: "Determine Stiffeners for Panels"
+  description: "Determines the number of stiffeners for all panels in an assembly."
+  precondition: |
+    PREFIX ex: <http://example.com/ns#>
+    ASK { ?assembly ex:panelDetailsCalculated true . }
+  effect: "Modifies domain:ElevatorPanel by adding ex:stiffenerCount. Sets ex:stiffenersDetermined on assembly."
+  inputs:
+    - name: "rear_wall_assembly_uri"
+      mapsToRdfProperty: "ex:createdRearWallAssemblyURI"
+      datatype: "xsd:anyURI"
+      isRequired: true
+  outputs:
+    - name: "stiffeners_determined_flag"
+      mapsToRdfProperty: "ex:stiffenersDetermined" # On the RearWallAssembly
+      datatype: "xsd:boolean"
+  implementation:
+    type: "kce:PythonScriptInvocation"
+    scriptPath: "../scripts/determine_stiffeners.py"
 
-  # Node 5: Composite Node to calculate costs for a single panel
-  # This demonstrates a composite node. In a real scenario, the Python script for costs
-  # might be complex enough to warrant being a single AtomicNode that internally handles sub-calcs.
-  # Or, this composite node could be for an entire assembly if it iterates.
-  # For MVP, let's make this a simple pass-through to an atomic cost calculation node.
-  # This is more conceptual for MVP. A single AtomicNode "CalculateAllPanelCostsNode" might be more practical.
+- uri: "ex:CalculateAllPanelCostsNode"
+  kind: "AtomicNode"
+  name: "Calculate Costs for All Panels"
+  description: "Calculates material, processing, and total costs for all panels in an assembly."
+  precondition: |
+    PREFIX ex: <http://example.com/ns#>
+    ASK {
+      ?assembly ex:panelDetailsCalculated true ;
+                ex:boltHolesCalculated true ;
+                ex:stiffenersDetermined true .
+    }
+  effect: "Modifies domain:ElevatorPanel by adding costs. Sets ex:panelCostsCalculated on assembly."
+  inputs:
+    - name: "rear_wall_assembly_uri"
+      mapsToRdfProperty: "ex:createdRearWallAssemblyURI"
+      datatype: "xsd:anyURI"
+      isRequired: true
+  outputs:
+    - name: "panel_costs_calculated_flag"
+      mapsToRdfProperty: "ex:panelCostsCalculated" # On the RearWallAssembly
+      datatype: "xsd:boolean"
+  implementation:
+    type: "kce:PythonScriptInvocation"
+    scriptPath: "../scripts/calculate_panel_costs.py"
 
-  # Atomic Node: Calculate Costs for ALL panels
-  - id: "ex:CalculateAllPanelCostsNode"
-    type: "AtomicNode"
-    label: "Calculate Costs for All Panels"
-    description: "Calculates material, processing, and total costs for all panels in an assembly."
-    inputs:
-      - name: "rear_wall_assembly_uri"
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI"
-        data_type: "anyURI"
-        is_required: true
-      # Script queries for all panels and their relevant properties (thickness, width, hole count, stiffener count)
-    outputs:
-      # Modifies :ElevatorPanel instances by adding:
-      # ex:materialCost, ex:processingCost, ex:panelTotalCost
-      - name: "panel_costs_calculated_flag"
-        maps_to_rdf_property: "ex:panelCostsCalculated" # On the RearWallAssembly
-        data_type: "boolean"
-    invocation:
-      type: "PythonScript"
-      script_path: "../scripts/calculate_panel_costs.py" # This script would iterate through panels
-      argument_passing_style: "commandline"
-
-  # Node 6: Sum Assembly Costs
-  - id: "ex:SumAssemblyCostsNode"
-    type: "AtomicNode"
-    label: "Sum Total Assembly Costs"
-    description: "Calculates the total cost for the entire rear wall assembly."
-    inputs:
-      - name: "rear_wall_assembly_uri"
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI"
-        data_type: "anyURI"
-        is_required: true
-      # Script queries for all panels' ex:panelTotalCost linked to the assembly
-    outputs:
-      # Modifies :RearWallAssembly instance by adding ex:assemblyTotalCost
-      - name: "assembly_cost_calculated_flag"
-        maps_to_rdf_property: "ex:assemblyCostCalculated" # On the RearWallAssembly
-        data_type: "boolean"
-    invocation:
-      type: "PythonScript"
-      script_path: "../scripts/sum_assembly_costs.py"
-      argument_passing_style: "commandline"
-
-  # --- Example of a Composite Node (Conceptual for Panel Cost - can be simplified for MVP) ---
-  # This demonstrates the structure but might be overly complex if CalculateAllPanelCostsNode is sufficient.
-  # - id: "ex:CalculateSinglePanelCostCompositeNode"
-  #   type: "CompositeNode"
-  #   label: "Calculate Single Panel Cost (Composite)"
-  #   description: "A sub-workflow to calculate various costs for one panel."
-  #   inputs: # Inputs for the composite node itself
-  #     - name: "panel_uri_for_costing"
-  #       maps_to_rdf_property: "ex:targetPanelForCosting" # Property on the workflow instance context
-  #       data_type: "anyURI"
-  #   outputs: # Outputs from the composite node itself
-  #     - name: "single_panel_total_cost_value"
-  #       maps_to_rdf_property: "ex:computedSinglePanelCost" # Property on the workflow instance context
-  #       data_type: "float"
-  #   internal_workflow_uri: "ex:SinglePanelCostInternalWorkflow" # Defined in workflows.yaml
-  #   mappings:
-  #     inputs:
-  #       - external_param_name: "panel_uri_for_costing" # Name of this composite node's input
-  #         internal_workflow_input_name: "panel_to_process_uri" # Name of the input for the internal workflow
-  #     outputs:
-  #       - internal_workflow_output_name: "calculated_total_cost_for_panel" # Name of output from internal workflow
-  #         external_param_name: "single_panel_total_cost_value" # Name of this composite node's output
+- uri: "ex:SumAssemblyCostsNode"
+  kind: "AtomicNode"
+  name: "Sum Total Assembly Costs"
+  description: "Calculates the total cost for the entire rear wall assembly."
+  precondition: |
+    PREFIX ex: <http://example.com/ns#>
+    ASK { ?assembly ex:panelCostsCalculated true . }
+  effect: "Modifies domain:RearWallAssembly by adding ex:assemblyTotalCost. Sets ex:assemblyCostCalculated on assembly."
+  inputs:
+    - name: "rear_wall_assembly_uri"
+      mapsToRdfProperty: "ex:createdRearWallAssemblyURI"
+      datatype: "xsd:anyURI"
+      isRequired: true
+  outputs:
+    - name: "assembly_cost_calculated_flag"
+      mapsToRdfProperty: "ex:assemblyCostCalculated" # On the RearWallAssembly
+      datatype: "xsd:boolean"
+  implementation:
+    type: "kce:PythonScriptInvocation"
+    scriptPath: "../scripts/sum_assembly_costs.py"
