@@ -1,0 +1,65 @@
+# examples/elevator_panel_simplified/definitions/workflows.yaml
+
+workflows:
+  # Main Workflow for designing and costing the simplified elevator rear wall
+  - id: "ex:SimplifiedElevatorPanelWorkflow"
+    label: "Simplified Elevator Panel Design and Costing Workflow"
+    description: "Calculates dimensions, features, and costs for a simplified elevator rear wall assembly."
+    steps:
+      # Step 1: Initialize the RearWallAssembly and basic panel structures.
+      # This node will create the main assembly URI and link panel URIs to it.
+      # It also needs the workflow_instance_uri to store the assembly URI.
+      - executes_node_uri: "ex:InitializeRearWallNode"
+        order: 10 # Using order to define sequence
+
+      # Step 2: Calculate detailed dimensions for all panels within the assembly.
+      # This node takes the assembly URI (produced by InitializeRearWallNode,
+      # assumed to be on the workflow context) and updates panel instances.
+      - executes_node_uri: "ex:CalculatePanelDetailsNode"
+        order: 20
+
+      # Step 3: Calculate bolt holes for all panels.
+      - executes_node_uri: "ex:CalculateBoltHolesNode"
+        order: 30
+
+      # Step 4: Determine stiffeners for all panels.
+      # After this step, rules like ex:CheckHighStiffenerNeedRule might fire
+      # and potentially trigger ex:LogStiffenerInfoNode (if defined and evaluator runs).
+      - executes_node_uri: "ex:DetermineStiffenersNode"
+        order: 40
+
+      # Step 5: Calculate costs for all panels.
+      - executes_node_uri: "ex:CalculateAllPanelCostsNode"
+        order: 50
+
+      # Step 6: Sum the costs of all panels to get the total assembly cost.
+      # After this step, rules like ex:CheckBudgetExceededRule might fire.
+      - executes_node_uri: "ex:SumAssemblyCostsNode"
+        order: 60
+
+      # Step 7 (Optional): A final reporting/logging node for the assembly.
+      # This node could query all the calculated data for the assembly and its panels
+      # and produce a summary report or log.
+      # - executes_node_uri: "ex:GenerateAssemblyReportNode" # Needs to be defined in nodes.yaml
+      #   order: 70
+
+  # --- Example of an Internal Workflow for a Composite Node (Conceptual) ---
+  # This would be used if ex:CalculateSinglePanelCostCompositeNode from nodes.yaml was fully implemented
+  # and we wanted to break down single panel costing into finer steps.
+  # For the current MVP using CalculateAllPanelCostsNode, this internal workflow might not be directly used
+  # unless CalculateAllPanelCostsNode itself was a composite node.
+
+  # - id: "ex:SinglePanelCostInternalWorkflow"
+  #   label: "Internal Workflow for Single Panel Cost Calculation"
+  #   description: "Calculates material, processing, and total cost for a single target panel."
+  #   steps:
+  #     # This internal workflow would expect an input, e.g., "panel_to_process_uri",
+  #     # which would be mapped from the composite node's input.
+  #     - executes_node_uri: "ex:CalculateMaterialCostForPanelNode" # Atomic node, takes panel_uri
+  #       order: 10
+  #     - executes_node_uri: "ex:CalculateProcessingCostForPanelNode" # Atomic node, takes panel_uri
+  #       order: 20
+  #     - executes_node_uri: "ex:SumSinglePanelTotalCostNode" # Atomic node, takes panel_uri, outputs total
+  #       order: 30
+      # The output of this internal workflow, e.g., "calculated_total_cost_for_panel",
+      # would then be mapped to the composite node's output.

@@ -1,0 +1,87 @@
+# examples/elevator_panel_simplified/definitions/rules.yaml
+
+rules:
+  # Rule 1: Determine if high number of stiffeners are needed based on panel width
+  # This rule might set a flag or trigger a specific node that handles stiffener assignment.
+  # For MVP, let's assume it could trigger a node that explicitly sets a 'high_stiffener_requirement' flag.
+  # However, a more practical approach might be for the DetermineStiffenersNode's script to handle this logic internally.
+  # This rule is more for demonstrating the rule mechanism.
+  - id: "ex:CheckHighStiffenerNeedRule"
+    label: "Check if High Stiffener Count is Potentially Needed"
+    description: "If any panel's width is greater than 500mm, log an event or potentially trigger a specialized node."
+    condition_sparql: |  # SPARQL ASK Query
+      PREFIX ex: <http://kce.com/example/elevator_panel#>
+      PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+      ASK {
+        ?panel rdf:type ex:ElevatorPanel ;
+               ex:panelWidth ?width .
+        FILTER(?width > 500)
+      }
+    # Action for MVP: Trigger a generic logging node or a node that sets a flag.
+    # Let's assume we have a conceptual node ex:LogHighStiffenerPotentialNode
+    action_node_uri: "ex:LogStiffenerInfoNode" # This node would need to be defined in nodes.yaml
+    priority: 10
+
+  # Rule 2: Check if panel thickness needs to be the thicker variant (e.g., 1.5mm)
+  # This is usually determined by carInternalHeight.
+  # The actual thickness setting is likely done by CalculatePanelDetailsNode.
+  # This rule could serve as a validation or trigger a notification if a certain condition holds.
+  - id: "ex:CheckThickPanelRequirementRule"
+    label: "Check if Thicker Panel Material is Required"
+    description: "If car internal height exceeds 2300mm, log this condition."
+    condition_sparql: |
+      PREFIX ex: <http://kce.com/example/elevator_panel#>
+      PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+      ASK {
+        # Assumes carInternalHeight is on the RearWallAssembly or a CarInternalDimensions instance.
+        # Let's assume it's on the ex:RearWallAssembly instance linked by ex:createdRearWallAssemblyURI
+        # on the workflow instance context.
+        # This means the rule's condition depends on the state of specific instances.
+        # For a general rule, it might look for any assembly.
+        # ?assembly rdf:type ex:RearWallAssembly ;
+        #            ex:carInternalHeight ?height .
+        # For a specific run, the workflow context URI needs to be part of the query,
+        # which is hard for a static rule definition without dynamic query templating (post-MVP).
+        #
+        # Simpler for MVP: Assume a node has already populated a global or specific
+        # ex:CarInternalDimensions instance.
+        ?dims rdf:type ex:CarInternalDimensions ;
+              ex:carInternalHeight ?height .
+        FILTER(?height > 2300)
+      }
+    action_node_uri: "ex:LogThickPanelInfoNode" # Another conceptual logging node
+    priority: 5
+
+  # Rule 3: Alert if total assembly cost exceeds a budget (conceptual)
+  # This rule would run after costs are calculated and summed.
+  - id: "ex:CheckBudgetExceededRule"
+    label: "Check if Assembly Cost Exceeds Budget"
+    description: "If the total assembly cost is over a predefined budget (e.g., 1000 units), trigger an alert node."
+    condition_sparql: |
+      PREFIX ex: <http://kce.com/example/elevator_panel#>
+      PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+      ASK {
+        ?assembly rdf:type ex:RearWallAssembly ;
+                  ex:assemblyTotalCost ?totalCost .
+        # Define budget threshold, e.g.
+        FILTER(?totalCost > 1000.0)
+      }
+    action_node_uri: "ex:LogBudgetAlertNode" # Conceptual alert/logging node
+    priority: 1
+
+  # Note: For KCE MVP, the primary calculation logic (like how many stiffeners or what thickness)
+  # is expected to be within the Python scripts of AtomicNodes.
+  # Rules are more for:
+  # 1. Conditional triggering of entire nodes/sub-processes based on a state.
+  # 2. Validation checks that might trigger logging or notification nodes.
+  # 3. Simple state changes via a dedicated small "setter" node (though direct data modification by rules is post-MVP).
+
+  # Example of a rule that could potentially re-trigger a calculation if a condition changes (more advanced).
+  # This is likely beyond simple MVP queueing if it implies re-running parts of the workflow.
+  # - id: "ex:RecheckDimensionsIfFlaggedRule"
+  #   label: "Recheck dimensions if a specific flag is set"
+  #   condition_sparql: |
+  #     PREFIX ex: <http://kce.com/example/elevator_panel#>
+  #     ASK { ?assembly ex:needsDimensionRecheck true . }
+  #   action_node_uri: "ex:CalculatePanelDetailsNode" # Re-run the details calculation
+  #   priority: 20

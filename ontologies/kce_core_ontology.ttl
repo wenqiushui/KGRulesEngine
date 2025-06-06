@@ -1,0 +1,283 @@
+# kce_core_ontology_v0.2.ttl
+# Knowledge-CAD-Engine (KCE) Core Ontology - MVP Version 0.2
+
+@prefix : <http://kce.com/ontology/core#> . # Default namespace for this ontology
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> . # For provenance related terms
+
+# --- Ontology Definition ---
+:ontology a owl:Ontology ;
+    rdfs:label "Knowledge-CAD-Engine Core Ontology" ;
+    rdfs:comment "Defines the core concepts for the KCE framework, including nodes, workflows, rules, and execution provenance for the MVP." ;
+    owl:versionInfo "0.2" .
+
+# --- Base Classes ---
+:Entity a owl:Class ;
+    rdfs:label "KCE Entity" ;
+    rdfs:comment "A base class for most entities defined within the KCE framework." .
+
+# --- Node Definitions ---
+:Node a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Node" ;
+    rdfs:comment "An abstract base class for an executable unit within a KCE workflow. It can be atomic or composite." .
+
+:AtomicNode a owl:Class ;
+    rdfs:subClassOf :Node ;
+    rdfs:label "Atomic Node" ;
+    rdfs:comment "Represents a single, indivisible executable unit, typically mapping to an external script or function." .
+
+:CompositeNode a owl:Class ;
+    rdfs:subClassOf :Node ;
+    rdfs:label "Composite Node" ;
+    rdfs:comment "Represents a sub-workflow or a collection of nodes grouped as a single logical unit." .
+
+# --- Parameter Definitions ---
+:Parameter a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Parameter" ;
+    rdfs:comment "Abstract base class for input or output parameters of a Node." .
+
+:InputParameter a owl:Class ;
+    rdfs:subClassOf :Parameter ;
+    rdfs:label "Input Parameter" ;
+    rdfs:comment "An input parameter for a Node." .
+
+:OutputParameter a owl:Class ;
+    rdfs:subClassOf :Parameter ;
+    rdfs:label "Output Parameter" ;
+    rdfs:comment "An output parameter of a Node." .
+
+# --- Invocation Specification ---
+:InvocationSpecification a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Invocation Specification" ;
+    rdfs:comment "Describes how an AtomicNode should be executed." .
+
+:PythonScriptInvocation a owl:Class ;
+    rdfs:subClassOf :InvocationSpecification ;
+    rdfs:label "Python Script Invocation" ;
+    rdfs:comment "Specifies execution details for a Python script." .
+
+# --- Workflow Definitions ---
+:Workflow a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Workflow" ;
+    rdfs:comment "Represents a defined sequence of operations (steps involving nodes) to achieve a goal." .
+
+:WorkflowStep a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Workflow Step" ;
+    rdfs:comment "A single step within a Workflow, typically executing a Node." .
+
+# --- Rule Definition ---
+:Rule a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Rule" ;
+    rdfs:comment "A declarative rule with a condition and an action (e.g., trigger a node)." .
+
+# --- Execution Provenance & Logging (inspired by PROV-O subset) ---
+:ExecutionLog a owl:Class ; # Corresponds to prov:Activity for the overall workflow run
+    rdfs:subClassOf :Entity , prov:Activity ;
+    rdfs:label "Workflow Execution Log" ;
+    rdfs:comment "Records metadata about a single execution instance of a Workflow." .
+
+:NodeExecutionLog a owl:Class ; # Corresponds to prov:Activity for a single node execution
+    rdfs:subClassOf :Entity , prov:Activity ;
+    rdfs:label "Node Execution Log" ;
+    rdfs:comment "Records metadata about a single execution instance of a Node within a Workflow run." .
+
+:WorkflowInstanceData a owl:Class ; # Represents the data context for a workflow instance
+    rdfs:subClassOf :Entity , prov:Entity ;
+    rdfs:label "Workflow Instance Data Context" ;
+    rdfs:comment "A resource representing the data context (inputs, intermediate, outputs) for a specific workflow execution instance." .
+
+# Generic event for logging various occurrences during execution
+:AuditEvent a owl:Class ;
+    rdfs:subClassOf :Entity , prov:InstantaneousEvent ; # or just prov:Event if duration is implied
+    rdfs:label "Audit Event" ;
+    rdfs:comment "A generic event that occurred during KCE processing, e.g., rule firing." .
+
+:RuleFiredEvent a owl:Class ;
+    rdfs:subClassOf :AuditEvent ;
+    rdfs:label "Rule Fired Event" .
+
+:RuleConditionNotMetEvent a owl:Class ;
+    rdfs:subClassOf :AuditEvent ;
+    rdfs:label "Rule Condition Not Met Event" .
+
+:RuleEvaluationErrorEvent a owl:Class ;
+    rdfs:subClassOf :AuditEvent ;
+    rdfs:label "Rule Evaluation Error Event" .
+
+
+# --- Properties for Nodes ---
+:hasInputParameter a owl:ObjectProperty ;
+    rdfs:label "has input parameter" ;
+    rdfs:domain :Node ;
+    rdfs:range :InputParameter .
+
+:hasOutputParameter a owl:ObjectProperty ;
+    rdfs:label "has output parameter" ;
+    rdfs:domain :Node ;
+    rdfs:range :OutputParameter .
+
+:hasInvocationSpec a owl:ObjectProperty ;
+    rdfs:label "has invocation specification" ;
+    rdfs:domain :AtomicNode ;
+    rdfs:range :InvocationSpecification .
+
+:hasInternalWorkflow a owl:ObjectProperty ;
+    rdfs:label "has internal workflow" ;
+    rdfs:domain :CompositeNode ;
+    rdfs:range :Workflow .
+
+# --- Properties for Parameters ---
+:parameterName a owl:DatatypeProperty ; # Changed from ObjectProperty to DatatypeProperty as name is a literal
+    rdfs:label "parameter name" ;
+    rdfs:domain :Parameter ;
+    rdfs:range xsd:string .
+
+:mapsToRdfProperty a owl:ObjectProperty ; # This property links to an rdf:Property URI
+    rdfs:label "maps to RDF property" ;
+    rdfs:domain :Parameter ;
+    rdfs:range rdf:Property .
+
+:dataType a owl:ObjectProperty ; # This property links to an XSD datatype URI (e.g., xsd:integer)
+    rdfs:label "data type" ;
+    rdfs:domain :Parameter ;
+    rdfs:range rdfs:Datatype . # Range is rdfs:Datatype as XSD types are instances of this
+
+:isRequired a owl:DatatypeProperty ;
+    rdfs:label "is required" ;
+    rdfs:domain :InputParameter ;
+    rdfs:range xsd:boolean .
+
+# --- Properties for PythonScriptInvocation ---
+:scriptPath a owl:DatatypeProperty ;
+    rdfs:label "script path" ;
+    rdfs:domain :PythonScriptInvocation ;
+    rdfs:range xsd:string . # Should be an absolute path after resolution
+
+:argumentPassingStyle a owl:DatatypeProperty ;
+    rdfs:label "argument passing style" ;
+    rdfs:domain :PythonScriptInvocation ;
+    rdfs:range xsd:string . # e.g., "commandline", "stdin"
+
+# --- Properties for Composite Node Mappings (Simplified MVP) ---
+:mapsInputToInternal a owl:ObjectProperty ;
+    rdfs:label "maps input to internal" ;
+    rdfs:comment "Describes how an external input of a composite node maps to an internal workflow's input." ;
+    rdfs:domain :CompositeNode ;
+    rdfs:range :MappingStructure . # Define :MappingStructure or use BNodes directly
+
+:mapsInternalToOutput a owl:ObjectProperty ;
+    rdfs:label "maps internal to output" ;
+    rdfs:comment "Describes how an internal workflow's output maps to an external output of a composite node." ;
+    rdfs:domain :CompositeNode ;
+    rdfs:range :MappingStructure . # Define :MappingStructure or use BNodes directly
+
+:MappingStructure a owl:Class ; # A generic placeholder for mapping details
+    rdfs:label "Mapping Structure" ;
+    rdfs:comment "A structure (often a BNode) detailing parameter mapping for composite nodes." .
+
+:externalParameterName a owl:DatatypeProperty ;
+    rdfs:label "external parameter name" ;
+    rdfs:domain :MappingStructure ; # Or directly on the mapping BNode
+    rdfs:range xsd:string .
+
+:internalParameterName a owl:DatatypeProperty ; # Could be input or output name within sub-workflow
+    rdfs:label "internal parameter name" ;
+    rdfs:domain :MappingStructure ; # Or directly on the mapping BNode
+    rdfs:range xsd:string .
+
+# :mapsToInternalPropertyURI a owl:ObjectProperty ; # Alternative mapping for internal workflow
+#     rdfs:label "maps to internal property URI" ;
+#     rdfs:domain :MappingStructure ;
+#     rdfs:range rdf:Property .
+
+# --- Properties for Workflows ---
+:hasStep a owl:ObjectProperty ;
+    rdfs:label "has step" ;
+    rdfs:domain :Workflow ;
+    rdfs:range :WorkflowStep .
+
+# --- Properties for WorkflowSteps ---
+:executesNode a owl:ObjectProperty ;
+    rdfs:label "executes node" ;
+    rdfs:domain :WorkflowStep ;
+    rdfs:range :Node .
+
+:order a owl:DatatypeProperty ;
+    rdfs:label "order" ;
+    rdfs:domain :WorkflowStep ;
+    rdfs:range xsd:integer .
+
+# :nextStep a owl:ObjectProperty ; # Optional for MVP if order is primary
+#     rdfs:label "next step" ;
+#     rdfs:domain :WorkflowStep ;
+#     rdfs:range :WorkflowStep .
+
+# --- Properties for Rules ---
+:hasConditionSPARQL a owl:DatatypeProperty ;
+    rdfs:label "has condition SPARQL" ;
+    rdfs:domain :Rule ;
+    rdfs:range xsd:string . # An ASK query
+
+:hasActionNodeURI a owl:ObjectProperty ; # Changed to ObjectProperty to link to a Node URI
+    rdfs:label "has action node URI" ;
+    rdfs:domain :Rule ;
+    rdfs:range :Node . # The URI of the node to trigger
+
+:priority a owl:DatatypeProperty ;
+    rdfs:label "priority" ;
+    rdfs:domain :Rule ;
+    rdfs:range xsd:integer .
+
+# --- Properties for Execution Logging & Provenance ---
+:executesWorkflow a owl:ObjectProperty ;
+    rdfs:label "executes workflow" ;
+    rdfs:domain :ExecutionLog ;
+    rdfs:range :Workflow .
+
+:executionStatus a owl:DatatypeProperty ; # Literal: "Running", "CompletedSuccess", "Failed"
+    rdfs:label "execution status" ;
+    rdfs:domain [ owl:unionOf ( :ExecutionLog :NodeExecutionLog ) ] ; # Applies to both
+    rdfs:range xsd:string .
+
+:executesNodeInstance a owl:ObjectProperty ; # Renamed from 'executesNode' to avoid conflict with WorkflowStep property
+    rdfs:label "executes node instance" ;
+    rdfs:comment "Links a NodeExecutionLog to the specific Node definition that was executed." ;
+    rdfs:domain :NodeExecutionLog ;
+    rdfs:range :Node .
+
+:hasErrorMessage a owl:DatatypeProperty ;
+    rdfs:label "has error message" ;
+    rdfs:domain :NodeExecutionLog ; # Could also be on ExecutionLog
+    rdfs:range xsd:string .
+
+# Properties for AuditEvent
+:eventSeverity a owl:DatatypeProperty ; # Literal: "INFO", "DEBUG", "WARNING", "ERROR"
+    rdfs:label "event severity" ;
+    rdfs:domain :AuditEvent ;
+    rdfs:range xsd:string .
+
+:relatedEntity a owl:ObjectProperty ; # Link event to a KCE entity if applicable
+    rdfs:label "related entity" ;
+    rdfs:domain :AuditEvent ;
+    rdfs:range :Entity . # Or owl:Thing for more generality
+
+# prov:startedAtTime, prov:endedAtTime, prov:wasAssociatedWith, prov:used, prov:wasGeneratedBy
+# are imported from PROV-O namespace. KCE might define sub-properties if needed for more specific semantics.
+# For MVP, direct use of PROV-O terms is preferred.
+
+# --- General Metadata Properties (re-using dcterms) ---
+# dcterms:description used via rdfs:comment on classes, or can be used on instances.
+# rdfs:label is used extensively.
+# dcterms:creator can be used on :ExecutionLog.
+
+# End of KCE Core Ontology v0.2
