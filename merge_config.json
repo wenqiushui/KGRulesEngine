@@ -1,41 +1,19 @@
 {
   "merges": [
     {
-      "output_file": "temp_merge/output_concatenated.txt",
+      "output_file": "cli/main.py",
       "operation": "concatenate",
-      "segments": [{"source": "temp_merge/seg1.txt"}, {"source": "temp_merge/seg2.txt"}]
-    },
-    {
-      "output_file": "temp_merge/output_created_from_source.txt",
-      "operation": "create_new",
-      "source_file": "temp_merge/full.txt"
-    },
-    {
-      "output_file": "temp_merge/output_replaced_file.txt",
-      "operation": "replace_file",
-      "source_file": "temp_merge/full.txt"
-    },
-    {
-      "output_file": "temp_merge/output_block_replaced.txt",
-      "operation": "replace_block_by_markers",
-      "base_file": "temp_merge/base_replace.txt",
-      "segment_file": "temp_merge/segment_block.txt",
-      "start_marker": "Line one",
-      "end_marker": "Line three"
-    },
-    {
-      "output_file": "temp_merge/output_inserted_after.txt",
-      "operation": "insert_after_line",
-      "base_file": "temp_merge/base_replace.txt",
-      "segment_file": "temp_merge/segment_insert.txt",
-      "line_content": "Line two (marker_line)"
-    },
-    {
-      "output_file": "temp_merge/output_inserted_before.txt",
-      "operation": "insert_before_line",
-      "base_file": "temp_merge/base_replace.txt",
-      "segment_file": "temp_merge/segment_insert.txt",
-      "line_content": "Line two (marker_line)"
+      "segments": [
+        {"source": "temp_merge/cli_main_01_imports.py_segment"},
+        {"source": "temp_merge/cli_main_02_clicontext.py_segment"},
+        {"source": "temp_merge/cli_main_03_main_cli_func.py_segment"},
+        {"source": "temp_merge/cli_main_04_init_db_cmd.py_segment"},
+        {"source": "temp_merge/cli_main_05_load_defs_cmd.py_segment"},
+        {"source": "temp_merge/cli_main_06_solve_problem_cmd.py_segment"},
+        {"source": "temp_merge/cli_main_07_query_cmd.py_segment"},
+        {"source": "temp_merge/cli_main_08_show_log_cmd.py_segment"},
+        {"source": "temp_merge/cli_main_09_main_block.py_segment"}
+      ]
     }
   ]
 }
