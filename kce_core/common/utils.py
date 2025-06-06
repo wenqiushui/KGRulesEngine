@@ -1,290 +1,255 @@
-# kce_core/common/utils.py
-
-import yaml
+import rdflib
+from typing import Optional, Any, Union, List, Dict
+import uuid
 import json
-import logging
-from pathlib import Path
-from typing import Any, Dict, List, Union, Optional
-from rdflib import Namespace, URIRef, Literal, XSD
 
-# --- Constants ---
+# Define KCE and other relevant namespaces (should ideally come from a central ontology definitions file)
+KCE_NS = "http://kce.com/ontology/core#"
+EX_NS = "http://example.com/ns#"
 
-# Define common namespaces used in KCE (adjust URIs as needed)
-KCE_NS_STR = "http://kce.com/ontology/core#" # Example, replace with your actual ontology URI base
-KCE = Namespace(KCE_NS_STR)
-PROV = Namespace("http://www.w3.org/ns/prov#")
-RDF = Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
-RDFS = Namespace("http://www.w3.org/2000/01/rdf-schema#")
-OWL = Namespace("http://www.w3.org/2002/07/owl#")
-XSD_NS = Namespace(str(XSD)) # Get the XSD namespace string correctly
-DCTERMS = Namespace("http://purl.org/dc/terms/") # For common metadata like description
-EX_NS_STR = "http://kce.com/example#" # Example namespace for domain-specific things
-EX = Namespace(EX_NS_STR)
+KCE = rdflib.Namespace(KCE_NS)
+EX = rdflib.Namespace(EX_NS)
+RDF = rdflib.RDF
+RDFS = rdflib.RDFS
+XSD = rdflib.XSD # rdflib.namespace.XSD is correct
 
+def generate_instance_uri(base_uri: str, prefix: str, local_name: Optional[str] = None) -> rdflib.URIRef:
+    if not base_uri.endswith("/"):
+        base_uri += "/"
+    # Sanitize local_name if provided, e.g., replace spaces
+    safe_local_name = local_name.replace(' ', '_').replace('#', '_').replace('?', '_') if local_name else None
 
-# Default YAML encoding
-YAML_ENCODING = 'utf-8'
+    if safe_local_name:
+        return rdflib.URIRef(f"{base_uri}{prefix}/{safe_local_name}")
+    return rdflib.URIRef(f"{base_uri}{prefix}/{uuid.uuid4()}")
 
-# Default logging format
-LOGGING_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-DEFAULT_LOG_LEVEL = logging.INFO
+def get_value_from_graph(graph: rdflib.Graph,
+                         subject_uri: Optional[rdflib.URIRef],
+                         predicate_uri: rdflib.URIRef,
+                         preferred_lang: str = "en") -> Optional[Any]:
+    '''
+    Retrieves a single value for a given subject and predicate from the graph.
+    Handles literals (with language preference), URI resources.
+    Returns Python native type for literals, or rdflib.URIRef/BNode for resources.
+    Returns None if no value is found.
+    '''
+    # Store objects to avoid multiple graph traversals if possible
+    objects = list(graph.objects(subject_uri, predicate_uri))
+    if not objects:
+        return None
 
+    # 1. Try preferred language literal
+    for obj in objects:
+        if isinstance(obj, rdflib.Literal) and obj.language == preferred_lang:
+            return obj.toPython() # Converts to Python native type
 
-# --- Custom Exceptions ---
+    # 2. Try non-language-tagged literal
+    for obj in objects:
+        if isinstance(obj, rdflib.Literal) and not obj.language:
+            return obj.toPython()
 
-class KCEError(Exception):
-    """Base class for KCE specific errors."""
-    pass
+    # 3. Try any other language literal if preferred and non-tagged not found
+    for obj in objects:
+        if isinstance(obj, rdflib.Literal):
+            return obj.toPython()
 
-class DefinitionError(KCEError):
-    """Error related to loading or parsing definitions (YAML, etc.)."""
-    pass
+    # 4. If it's not a Literal, it might be a URIRef or BNode
+    for obj in objects: # Should be only one if we got here and it's not a literal list
+        if not isinstance(obj, rdflib.Literal):
+            return obj # Return the rdflib term itself (URIRef or BNode)
 
-class RDFStoreError(KCEError):
-    """Error related to RDF store operations."""
-    pass
+    return None # Should not be reached if objects list was not empty
 
-class ExecutionError(KCEError):
-    """Error occurring during workflow or node execution."""
-    pass
+def create_rdf_graph_from_json_ld_dict(json_ld_dict: Dict, default_base_ns_str: Optional[str]=None) -> rdflib.Graph:
+    g = rdflib.Graph()
+    # Use provided default_base_ns_str or fall back to EX_NS
+    effective_base_ns_str = default_base_ns_str if default_base_ns_str else EX_NS
+    if not effective_base_ns_str.endswith(('#', '/')): # Ensure namespace ends with # or /
+        effective_base_ns_str += "#"
+    base_ns = rdflib.Namespace(effective_base_ns_str)
 
-class ConfigurationError(KCEError):
-    """Error related to KCE configuration itself."""
-    pass
+    context = json_ld_dict.get("@context", {})
 
-
-# --- Configuration and File Handling ---
-
-def load_yaml_file(file_path: Union[str, Path]) -> Dict[str, Any]:
-    """
-    Loads a YAML file and returns its content as a dictionary.
-    Raises DefinitionError if file not found or parsing fails.
-    """
-    path = Path(file_path)
-    if not path.is_file():
-        raise DefinitionError(f"YAML file not found: {file_path}")
-    try:
-        with open(path, 'r', encoding=YAML_ENCODING) as f:
-            return yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise DefinitionError(f"Error parsing YAML file {file_path}: {e}")
-    except Exception as e:
-        raise DefinitionError(f"Unexpected error loading YAML file {file_path}: {e}")
-
-def load_json_file(file_path: Union[str, Path]) -> Union[Dict[str, Any], List[Any]]:
-    """
-    Loads a JSON file and returns its content.
-    Raises DefinitionError if file not found or parsing fails.
-    """
-    path = Path(file_path)
-    if not path.is_file():
-        raise DefinitionError(f"JSON file not found: {file_path}")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        raise DefinitionError(f"Error parsing JSON file {file_path}: {e}")
-    except Exception as e:
-        raise DefinitionError(f"Unexpected error loading JSON file {file_path}: {e}")
-
-def load_json_string(json_string: str) -> Union[Dict[str, Any], List[Any]]:
-    """
-    Loads a JSON string and returns its content.
-    Raises DefinitionError if parsing fails.
-    """
-    try:
-        return json.loads(json_string)
-    except json.JSONDecodeError as e:
-        raise DefinitionError(f"Error parsing JSON string: {e}")
-    except Exception as e:
-        raise DefinitionError(f"Unexpected error loading JSON string: {e}")
-
-def resolve_path(base_path: Union[str, Path], relative_path: str) -> Path:
-    """
-    Resolves a relative path against a base path (typically the location of a config file).
-    Returns an absolute Path object.
-    """
-    base = Path(base_path)
-    if base.is_file():
-        base = base.parent
-    return (base / relative_path).resolve()
-
-
-# --- RDF Utilities ---
-
-def to_uriref(value: str, base_ns: Optional[Namespace] = KCE) -> URIRef:
-    """
-    Converts a string to a URIRef.
-    If it contains ':', it's assumed to be a full URI or a prefixed name that rdflib can handle.
-    Otherwise, it prepends the base_ns.
-    """
-    if ':' in value: # crude check for prefixed name or full URI
-        # For prefixed names like 'kce:MyNode', rdflib's Namespace manager handles it
-        # if the prefix is bound to the graph. Here, we assume it might be full or
-        # will be handled by graph.bind(). If it's a direct URI, URIRef() is fine.
-        return URIRef(value)
-    elif base_ns:
-        return base_ns[value]
-    else:
-        raise ValueError("Cannot create URIRef without a base namespace for non-prefixed value.")
-
-def to_literal(value: Any, datatype: Optional[URIRef] = None, lang: Optional[str] = None) -> Literal:
-    """
-    Converts a Python value to an RDFLib Literal with an optional XSD datatype.
-    Tries to infer common XSD datatypes if not provided.
-    """
-    if datatype:
-        return Literal(value, datatype=datatype, lang=lang)
-
-    if isinstance(value, bool):
-        return Literal(value, datatype=XSD.boolean)
-    elif isinstance(value, int):
-        return Literal(value, datatype=XSD.integer)
-    elif isinstance(value, float):
-        return Literal(value, datatype=XSD.double) # or XSD.decimal
-    elif isinstance(value, str):
-        return Literal(value, datatype=XSD.string, lang=lang)
-    # Add more type inference if needed (e.g., datetime.date -> XSD.date)
-    else:
-        # Default to string if datatype cannot be inferred or is not explicitly given
-        return Literal(str(value), datatype=XSD.string, lang=lang)
-
-def get_xsd_uriref(xsd_type_short: str) -> Optional[URIRef]:
-    """
-    Converts a short XSD type string (e.g., "integer", "string", "boolean")
-    to its corresponding rdflib XSD URIRef.
-    Returns None if not found.
-    """
-    mapping = {
-        "string": XSD.string,
-        "integer": XSD.integer,
-        "int": XSD.integer, # alias
-        "boolean": XSD.boolean,
-        "bool": XSD.boolean, # alias
-        "float": XSD.float,
-        "double": XSD.double,
-        "decimal": XSD.decimal,
-        "dateTime": XSD.dateTime,
-        "date": XSD.date,
-        "time": XSD.time,
-        "anyURI": XSD.anyURI,
+    prefixes = { # Default common prefixes
+        'rdf': RDF, 'rdfs': RDFS, 'xsd': XSD,
+        'kce': KCE, 'ex': EX
     }
-    return mapping.get(xsd_type_short.lower())
+    if isinstance(context, dict):
+        for k, v in context.items():
+            if isinstance(v, str) and not k.startswith("@"):
+                prefixes[k] = rdflib.Namespace(v)
+
+    # Bind known prefixes to the graph
+    for prefix_label, namespace_obj in prefixes.items():
+        g.bind(prefix_label, namespace_obj)
 
 
-# --- Logging Setup ---
+    def expand_uri(value_str: str) -> rdflib.URIRef:
+        if value_str.startswith("http://") or value_str.startswith("https://") or value_str.startswith("urn:"):
+            return rdflib.URIRef(value_str)
+        if ":" in value_str:
+            prefix, local_name = value_str.split(":", 1)
+            if prefix in prefixes:
+                return prefixes[prefix][local_name]
+        return base_ns[value_str]
 
-def setup_logger(name: str, level: int = DEFAULT_LOG_LEVEL, log_file: Optional[Union[str, Path]] = None) -> logging.Logger:
-    """
-    Sets up a logger with a standard format.
-    """
-    logger = logging.getLogger(name)
-    if not logger.handlers: # Avoid adding multiple handlers if called multiple times
-        logger.setLevel(level)
-        formatter = logging.Formatter(LOGGING_FORMAT)
-
-        # Console Handler
-        ch = logging.StreamHandler()
-        ch.setLevel(level)
-        ch.setFormatter(formatter)
-        logger.addHandler(ch)
-
-        # File Handler (optional)
-        if log_file:
-            fh = logging.FileHandler(log_file)
-            fh.setLevel(level)
-            fh.setFormatter(formatter)
-            logger.addHandler(fh)
-    return logger
-
-# Example of a global logger for the KCE core, can be configured from CLI later
-kce_logger = setup_logger("kce_core")
+    entities_to_process = []
+    if "@graph" in json_ld_dict and isinstance(json_ld_dict["@graph"], list):
+        entities_to_process.extend(json_ld_dict["@graph"])
+    elif isinstance(json_ld_dict, list): # Handle list of entities at top level
+        entities_to_process.extend(json_ld_dict)
+    elif isinstance(json_ld_dict, dict) and ( "@id" in json_ld_dict or any(not k.startswith("@") for k in json_ld_dict.keys())):
+        entities_to_process.append(json_ld_dict)
 
 
-# --- Other Utilities ---
+    for entity_data in entities_to_process:
+        if not isinstance(entity_data, dict): continue
 
-def generate_unique_id(prefix: str = "urn:uuid:") -> str:
-    """Generates a unique ID, e.g., for run instances."""
-    import uuid
-    return f"{prefix}{uuid.uuid4()}"
-
-def get_from_dict_path(data_dict: Dict, path_keys: List[str], default: Optional[Any] = None) -> Any:
-    """
-    Safely retrieves a value from a nested dictionary using a list of keys (path).
-    Returns default if path is not found or any intermediate key is missing.
-    Example: get_from_dict_path({"a": {"b": 1}}, ["a", "b"]) -> 1
-             get_from_dict_path({"a": {"b": 1}}, ["a", "c"], "default") -> "default"
-    """
-    current = data_dict
-    for key in path_keys:
-        if isinstance(current, dict) and key in current:
-            current = current[key]
+        subject_uri_str = entity_data.get('@id')
+        if not subject_uri_str:
+            subject_uri = rdflib.BNode()
         else:
-            return default
-    return current
+            subject_uri = expand_uri(subject_uri_str)
+
+        type_values_from_data = entity_data.get("@type", [])
+        if not isinstance(type_values_from_data, list): type_values_from_data = [type_values_from_data]
+        for type_val_str in type_values_from_data:
+                 g.add((subject_uri, RDF.type, expand_uri(type_val_str)))
+
+
+        for key, value_obj in entity_data.items():
+            if key.startswith('@'):
+                continue
+
+            prop_uri = expand_uri(key)
+
+            values_to_add = value_obj if isinstance(value_obj, list) else [value_obj]
+
+            for v_item in values_to_add:
+                if isinstance(v_item, dict):
+                    if '@id' in v_item:
+                        g.add((subject_uri, prop_uri, expand_uri(v_item['@id'])))
+                    elif '@value' in v_item:
+                        lit_val = v_item['@value']
+                        lit_lang = v_item.get('@language')
+                        lit_type_str = v_item.get('@type')
+
+                        datatype_uri = expand_uri(lit_type_str) if lit_type_str else None
+                        g.add((subject_uri, prop_uri, rdflib.Literal(lit_val, lang=lit_lang or None, datatype=datatype_uri)))
+                elif isinstance(v_item, str) and (v_item.startswith("http:") or v_item.startswith("https:") or v_item.startswith("urn:") or (":" in v_item and v_item.split(":",1)[0] in prefixes)):
+                    g.add((subject_uri, prop_uri, expand_uri(v_item)))
+                else:
+                    g.add((subject_uri, prop_uri, rdflib.Literal(v_item)))
+    return g
+
+def graph_to_json_ld_string(graph: rdflib.Graph, context: Optional[Dict] = None, base_uri: Optional[str] = None) -> str:
+    try:
+        default_context = {
+            "xsd": str(XSD), "rdf": str(RDF), "rdfs": str(RDFS),
+            "kce": str(KCE), "ex": str(EX) # Use stringified namespaces for context
+        }
+        if context: default_context.update(context)
+
+        json_ld_str = graph.serialize(format='json-ld', context=default_context, indent=2, auto_compact=True)
+        return json_ld_str
+    except Exception as e: # Broad exception for potential serialization issues
+        print(f"Error during advanced JSON-LD serialization: {e}. Falling back to basic dictionary list.")
+        output_list = []
+        for s, p, o in graph:
+            s_dict = {"@id": str(s)}
+            p_str = str(p)
+            o_val: Any
+            if isinstance(o, rdflib.URIRef):
+                o_val = {"@id": str(o)}
+            elif isinstance(o, rdflib.Literal):
+                o_val = {"@value": o.toPython()}
+                if o.language: o_val["@language"] = o.language
+                if o.datatype: o_val["@type"] = str(o.datatype)
+            else: # BNode
+                o_val = str(o)
+
+            # Try to merge if subject already in list (very basic grouping)
+            found = False
+            for item in output_list:
+                if item["@id"] == s_dict["@id"]:
+                    if p_str not in item:
+                        item[p_str] = o_val
+                    elif isinstance(item[p_str], list):
+                        item[p_str].append(o_val)
+                    else: # Convert single value to list
+                        item[p_str] = [item[p_str], o_val]
+                    found = True
+                    break
+            if not found:
+                 s_dict[p_str] = o_val
+                 output_list.append(s_dict)
+        return json.dumps({"@context": default_context, "@graph": output_list}, indent=2)
+
 
 if __name__ == '__main__':
-    # Simple test cases for utils
-    kce_logger.info("Utils module loaded and testing.")
+    print("kce_core.common.utils tests starting.")
+    # Test generate_instance_uri
+    uri1 = generate_instance_uri("http://example.com/data/", "item", "My Item 1")
+    assert str(uri1) == "http://example.com/data/item/My_Item_1"
+    uri2 = generate_instance_uri("http://example.com/data", "item") # No local name
+    assert "http://example.com/data/item/" in str(uri2) and len(str(uri2)) > len("http://example.com/data/item/") + 30 # UUID
+    print("generate_instance_uri tests passed.")
 
-    # Test YAML loading
-    test_yaml_content = """
-    name: Test KCE
-    version: 0.1
-    nodes:
-      - id: NodeA
-        script: scripts/node_a.py
+    g_test = rdflib.Graph()
+    ts = EX.testSubject
+    tp_en = EX.testPredicateEn
+    tp_fr = EX.testPredicateFr
+    tp_none = EX.testPredicateNoLang
+
+    g_test.add((ts, tp_en, rdflib.Literal("Test Value EN", lang="en")))
+    g_test.add((ts, tp_fr, rdflib.Literal("Test Value FR", lang="fr")))
+    g_test.add((ts, tp_none, rdflib.Literal("Test Value NoLang")))
+    g_test.add((ts, EX.hasNumber, rdflib.Literal(123, datatype=XSD.integer)))
+    g_test.add((ts, EX.hasLink, EX.linkedResource))
+    g_test.add((ts, EX.multiLang, rdflib.Literal("English", lang="en")))
+    g_test.add((ts, EX.multiLang, rdflib.Literal("Deutsch", lang="de")))
+
+    assert get_value_from_graph(g_test, ts, tp_en, preferred_lang="en") == "Test Value EN"
+    assert get_value_from_graph(g_test, ts, tp_fr, preferred_lang="en") == "Test Value FR"
+    assert get_value_from_graph(g_test, ts, tp_none, preferred_lang="en") == "Test Value NoLang"
+    assert get_value_from_graph(g_test, ts, EX.hasNumber) == 123
+    assert get_value_from_graph(g_test, ts, EX.hasLink) == EX.linkedResource
+    assert get_value_from_graph(g_test, ts, EX.multiLang, preferred_lang="de") == "Deutsch"
+    assert get_value_from_graph(g_test, ts, EX.multiLang, preferred_lang="es") == "English" # Falls back to first found if preferred not there
+    print(f"get_value_from_graph tests passed.")
+
+    json_ld_str_complex = """
+    {
+        "@context": {
+            "ex": "http://example.com/ns#", "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+            "kce": "http://kce.com/ontology/core#", "foo": "http://foo.com/"
+        },
+        "@graph": [
+            {
+                "@id": "ex:MyEntity123", "@type": ["kce:SomeType", "foo:CustomEntity"],
+                "rdfs:label": "Test Entity From JSON",
+                "ex:hasNumber": {"@value": 456, "@type": "xsd:integer"},
+                "ex:hasLink": {"@id": "ex:AnotherLinkedEntity"},
+                "ex:stringProp": "A string value",
+                "ex:boolProp": {"@value": true, "@type": "xsd:boolean"},
+                "ex:dateProp": {"@value": "2023-01-01", "@type": "xsd:date"},
+                "ex:listOfNumbers": [{"@value": 1, "@type": "xsd:integer"}, {"@value": 2, "@type": "xsd:integer"}]
+            }
+        ]
+    }
     """
-    with open("test_temp.yaml", "w") as f:
-        f.write(test_yaml_content)
-    try:
-        data = load_yaml_file("test_temp.yaml")
-        assert data["name"] == "Test KCE"
-        kce_logger.info(f"YAML loaded successfully: {data}")
-        Path("test_temp.yaml").unlink() # Clean up
-    except KCEError as e:
-        kce_logger.error(f"YAML loading test failed: {e}")
+    g_from_json = create_rdf_graph_from_json_ld_dict(json.loads(json_ld_str_complex))
+    print(f"Graph from JSON-LD ({len(g_from_json)} triples):")
+    # Expected: types (2) + label (1) + hasNumber (1) + hasLink (1) + stringProp (1) + boolProp (1) + dateProp (1) + listOfNumbers (2) = 10
+    assert len(g_from_json) == 10, f"Expected 10 triples, got {len(g_from_json)}"
+    # print(g_from_json.serialize(format="turtle"))
 
-    # Test JSON loading
-    test_json_content = """{"param1": 10, "param2": "hello"}"""
-    try:
-        data = load_json_string(test_json_content)
-        assert data["param1"] == 10
-        kce_logger.info(f"JSON string loaded successfully: {data}")
-    except KCEError as e:
-        kce_logger.error(f"JSON string loading test failed: {e}")
+    json_ld_output = graph_to_json_ld_string(g_from_json)
+    # print(f"\nGraph to JSON-LD string:\n{json_ld_output}")
+    assert "ex:MyEntity123" in json_ld_output and "kce:SomeType" in json_ld_output
+    assert "foo:CustomEntity" in json_ld_output and "456" in json_ld_output
+    assert "\"true\"" in json_ld_output or "true," in json_ld_output # Handle boolean serialization
+    assert "2023-01-01" in json_ld_output
+    print("JSON-LD conversion tests passed.")
 
-
-    # Test RDF utils
-    uri1 = to_uriref("MyClass", KCE)
-    uri2 = to_uriref("kce:MyInstance", KCE) # KCE namespace here is just for demonstration
-                                          # normally, prefixed names are handled by graph.namespace_manager
-    uri3 = to_uriref("http://example.com/AnotherClass")
-    kce_logger.info(f"URIs: {uri1}, {uri2}, {uri3}")
-
-    lit_int = to_literal(123)
-    lit_str_typed = to_literal("test", datatype=XSD.string)
-    lit_bool = to_literal(True)
-    kce_logger.info(f"Literals: {lit_int} ({lit_int.datatype}), {lit_str_typed}, {lit_bool} ({lit_bool.datatype})")
-
-    xsd_uri = get_xsd_uriref("integer")
-    assert xsd_uri == XSD.integer
-    kce_logger.info(f"XSD URI for 'integer': {xsd_uri}")
-
-    # Test generate_unique_id
-    uid = generate_unique_id()
-    kce_logger.info(f"Generated UID: {uid}")
-
-    # Test get_from_dict_path
-    nested_dict = {"a": {"b": {"c": 100}, "d": [1,2,3]}, "e": "top"}
-    val1 = get_from_dict_path(nested_dict, ["a", "b", "c"])
-    assert val1 == 100
-    val2 = get_from_dict_path(nested_dict, ["a", "d", 1]) # Accessing list element
-    assert val2 == 2
-    val_none = get_from_dict_path(nested_dict, ["a", "x", "y"])
-    assert val_none is None
-    val_default = get_from_dict_path(nested_dict, ["a", "x"], default="not found")
-    assert val_default == "not found"
-    kce_logger.info(f"get_from_dict_path tests passed. val1={val1}, val2={val2}, val_none={val_none}, val_default={val_default}")
-
-    kce_logger.info("Utils tests completed.")
+    print("kce_core.common.utils tests complete.")
