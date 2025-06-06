@@ -1,41 +1,34 @@
 {
   "merges": [
     {
-      "output_file": "temp_merge/output_concatenated.txt",
-      "operation": "concatenate",
-      "segments": [{"source": "temp_merge/seg1.txt"}, {"source": "temp_merge/seg2.txt"}]
-    },
-    {
-      "output_file": "temp_merge/output_created_from_source.txt",
-      "operation": "create_new",
-      "source_file": "temp_merge/full.txt"
-    },
-    {
-      "output_file": "temp_merge/output_replaced_file.txt",
+      "output_file": "ontologies/kce_core_ontology.ttl",
       "operation": "replace_file",
-      "source_file": "temp_merge/full.txt"
+      "source_file": "temp_merge/kce_core_ontology.ttl_segment"
     },
     {
-      "output_file": "temp_merge/output_block_replaced.txt",
-      "operation": "replace_block_by_markers",
-      "base_file": "temp_merge/base_replace.txt",
-      "segment_file": "temp_merge/segment_block.txt",
-      "start_marker": "Line one",
-      "end_marker": "Line three"
+      "output_file": "examples/elevator_panel_simplified/params/target_scenario1.json",
+      "operation": "create_new",
+      "source_file": "temp_merge/target_scenario1.json_segment"
     },
     {
-      "output_file": "temp_merge/output_inserted_after.txt",
-      "operation": "insert_after_line",
-      "base_file": "temp_merge/base_replace.txt",
-      "segment_file": "temp_merge/segment_insert.txt",
-      "line_content": "Line two (marker_line)"
+      "output_file": "examples/elevator_panel_simplified/definitions/nodes.yaml",
+      "operation": "replace_file",
+      "source_file": "temp_merge/nodes.yaml_segment"
     },
     {
-      "output_file": "temp_merge/output_inserted_before.txt",
-      "operation": "insert_before_line",
-      "base_file": "temp_merge/base_replace.txt",
-      "segment_file": "temp_merge/segment_insert.txt",
-      "line_content": "Line two (marker_line)"
+      "output_file": "examples/elevator_panel_simplified/definitions/rules.yaml",
+      "operation": "replace_file",
+      "source_file": "temp_merge/rules.yaml_segment"
+    },
+    {
+      "output_file": "examples/elevator_panel_simplified/params/scenario1_params.json",
+      "operation": "replace_file",
+      "source_file": "temp_merge/scenario1_params.json_segment"
+    },
+    {
+      "output_file": "kce_core/__init__.py",
+      "operation": "replace_file",
+      "source_file": "temp_merge/kce_core__init__.py_segment"
     }
   ]
 }

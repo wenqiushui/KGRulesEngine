@@ -1,0 +1,4 @@
+{
+  "target_description_label": "Verify successful design and costing of the simplified elevator rear wall",
+  "sparql_ask_query": "PREFIX ex: <http://example.com/ns#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX kce: <http://kce.com/ontology/core#>\nPREFIX domain: <http://kce.com/example/elevator_panel#>\n\nASK WHERE {\n  ?assembly rdf:type domain:RearWallAssembly ;\n            ex:panelDetailsCalculated true ;\n            ex:boltHolesCalculated true ;\n            ex:stiffenersDetermined true ;\n            ex:panelCostsCalculated true ;\n            ex:assemblyCostCalculated true .\n\n  # Optional deeper check: ensure there's at least one panel part.\n  # FILTER EXISTS { \n  #   ?assembly domain:hasPanelPart ?panel .\n  # }\n}"
+}
