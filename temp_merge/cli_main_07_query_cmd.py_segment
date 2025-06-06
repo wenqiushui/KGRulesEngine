@@ -1,0 +1,129 @@
+@cli.command("query")
+@click.argument('sparql_query_or_file', type=str)
+@click.option('--format', 'output_format',
+              type=click.Choice(['table', 'json', 'turtle', 'xml', 'json-ld', 'n3', 'nt'], case_sensitive=False),
+              default='table', help="Output format for SELECT query results or graph serialization.")
+@pass_cli_context
+def query_store(ctx: CliContext, sparql_query_or_file: str, output_format: str):
+    """Executes a SPARQL query against the KnowledgeLayer or serializes parts of it."""
+    if not ctx.knowledge_layer:
+        kce_logger.error("KnowledgeLayer not initialized. Cannot execute query.")
+        click.echo("Error: KnowledgeLayer not initialized.", err=True)
+        sys.exit(1)
+
+    query_str: str
+    query_path = Path(sparql_query_or_file)
+    if query_path.is_file() and query_path.exists(): # Check existence for clarity
+        try:
+            query_str = query_path.read_text(encoding='utf-8')
+            kce_logger.info(f"Executing query from file: {query_path}")
+        except Exception as e:
+            kce_logger.error(f"Error reading query file {query_path}: {e}", exc_info=ctx.verbose)
+            click.echo(f"Error reading query file {query_path}: {e}", err=True)
+            sys.exit(1)
+    else:
+        query_str = sparql_query_or_file
+        kce_logger.info(f"Executing provided SPARQL query string (first 100 chars): {query_str[:100]}...")
+
+    query_type_test_str = query_str.strip().upper()
+
+    try:
+        if query_type_test_str.startswith("SELECT"):
+            results = ctx.knowledge_layer.execute_sparql_query(query_str) # Returns List[Dict]
+
+            if not isinstance(results, list):
+                err_msg_select = f"SELECT query returned an unexpected result type: {type(results)}."
+                kce_logger.error(err_msg_select)
+                click.echo(err_msg_select, err=True)
+                sys.exit(1)
+            if not results:
+                click.echo("Query returned no results.")
+                return
+
+            if output_format == 'table':
+                headers = list(results[0].keys())
+                col_widths = {h: len(h) for h in headers}
+                string_results = []
+                for row_dict in results:
+                    str_row = {}
+                    for h_key in headers:
+                        val = row_dict.get(h_key)
+                        # Handle rdflib terms for better string representation in table
+                        if isinstance(val, rdflib.URIRef): val_str = f"<{val}>"
+                        elif isinstance(val, rdflib.Literal):
+                            val_str = f'\"{val}\"' # Basic quoting
+                            if val.language: val_str += f"@{val.language}"
+                            if val.datatype: val_str += f"^^<{val.datatype}>"
+                        else: val_str = str(val if val is not None else '')
+                        str_row[h_key] = val_str
+                        if len(val_str) > col_widths[h_key]: col_widths[h_key] = len(val_str)
+                    string_results.append(str_row)
+
+                header_line = " | ".join(f"{h_val:{col_widths[h_val]}}" for h_val in headers)
+                click.echo("-" * len(header_line))
+                click.echo(header_line)
+                click.echo("-" * len(header_line))
+                for str_row_val in string_results:
+                    click.echo(" | ".join(f"{str_row_val.get(h_val, ''):{col_widths[h_val]}}" for h_val in headers))
+                click.echo("-" * len(header_line))
+
+            elif output_format == 'json':
+                serializable_results = []
+                for row_dict in results:
+                    serializable_row = {str(key): str(value) for key, value in row_dict.items()}
+                    serializable_results.append(serializable_row)
+                click.echo(json.dumps(serializable_results, indent=2))
+            else:
+                click.echo(f"Output format '{output_format}' for SELECT not directly supported for CLI pretty print. Raw results (stringified):")
+                for row in results: click.echo({str(k): str(v) for k,v in row.items()})
+
+        elif query_type_test_str.startswith("ASK"):
+            result_bool = ctx.knowledge_layer.execute_sparql_query(query_str) # Returns bool
+            click.echo(f"ASK Query Result: {result_bool}")
+
+        elif query_type_test_str.startswith("CONSTRUCT") or query_type_test_str.startswith("DESCRIBE"):
+            result_graph = ctx.knowledge_layer.execute_sparql_query(query_str) # Returns RDFGraph
+
+            if not isinstance(result_graph, rdflib.Graph):
+                err_msg_graph = f"Query did not return an RDF Graph as expected. Got: {type(result_graph)}"
+                kce_logger.error(err_msg_graph)
+                click.echo(err_msg_graph, err=True)
+                sys.exit(1)
+
+            valid_rdf_formats = ['turtle', 'xml', 'json-ld', 'n3', 'nt']
+            if output_format not in valid_rdf_formats:
+                warning_msg_fmt = f"Graph serialization format '{output_format}' not directly supported. Defaulting to turtle."
+                click.echo(warning_msg_fmt, err=True)
+                kce_logger.warning(warning_msg_fmt)
+                output_format = 'turtle'
+
+            try:
+                # For json-ld, provide a basic context for better output
+                # context_for_json_ld = kce_common_ns if output_format == 'json-ld' else None # kce_common_ns from segment 1
+                # serialize() in rdflib 6+ does not take context directly for json-ld in this way.
+                # It can be passed to the store or handled by a plugin. For basic CLI, use default serialization.
+                serialized_graph = result_graph.serialize(format=output_format)
+                click.echo(serialized_graph)
+            except rdflib.plugin.PluginException as e:
+                kce_logger.error(f"RDF serialization error for format '{output_format}': {e}", exc_info=ctx.verbose)
+                click.echo(f"Error serializing graph to '{output_format}': {e}. Try 'turtle' or 'xml'.", err=True)
+                sys.exit(1)
+
+        elif any(query_type_test_str.startswith(update_kw) for update_kw in ["INSERT", "DELETE", "LOAD", "CLEAR", "DROP", "CREATE"]):
+            ctx.knowledge_layer.execute_sparql_update(query_str)
+            click.echo("SPARQL UPDATE/DDL operation executed successfully.")
+            kce_logger.info(f"SPARQL UPDATE operation executed: {query_str[:100]}...")
+        else:
+            unsupported_query_msg = f"Unsupported or unrecognized SPARQL query type starting with: {query_type_test_str[:20]}..."
+            kce_logger.warning(unsupported_query_msg)
+            click.echo(unsupported_query_msg, err=True)
+            sys.exit(1)
+
+    except RDFStoreError as e: # RDFStoreError from segment 1
+        kce_logger.error(f"Error executing query: {e}", exc_info=ctx.verbose)
+        click.echo(click.style(f"Query Error: {e}", fg='red'), err=True)
+        sys.exit(1)
+    except Exception as e:
+        kce_logger.critical(f"Unexpected error during query: {e}", exc_info=True)
+        click.echo(click.style(f"Unexpected Query Error: {e}", fg='red'), err=True)
+        sys.exit(1)

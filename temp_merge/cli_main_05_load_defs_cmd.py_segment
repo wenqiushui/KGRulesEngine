@@ -1,0 +1,74 @@
+@cli.command("load-defs")
+@click.argument('definitions_directory', # Changed from yaml_path, explicitly a directory
+                type=click.Path(exists=True, file_okay=False, dir_okay=True, resolve_path=True))
+# Removed --no-reasoning option, reasoning is decoupled
+@pass_cli_context
+def load_defs(ctx: CliContext, definitions_directory: str): # parameter name changed
+    """Loads KCE definitions (nodes, rules, etc.) from a directory of YAML files."""
+    if not ctx.definition_loader or not ctx.knowledge_layer:
+        kce_logger.error("DefinitionLoader or KnowledgeLayer not initialized. Cannot load definitions.")
+        click.echo("Error: DefinitionLoader or KnowledgeLayer not initialized.", err=True)
+        sys.exit(1)
+
+    path_obj = Path(definitions_directory)
+    click.echo(f"Loading all YAML definitions from directory: {path_obj}...")
+    kce_logger.info(f"Starting definition load from directory: {path_obj}")
+
+    try:
+        # Call the new interface method from IDefinitionTransformationLayer
+        load_status: LoadStatus = ctx.definition_loader.load_definitions_from_path(str(path_obj))
+
+        loaded_count = load_status.get("loaded_definitions_count", 0)
+        errors = load_status.get("errors", [])
+
+        if loaded_count > 0:
+            success_msg = f"Successfully processed {loaded_count} definition documents from directory {path_obj}."
+            click.echo(click.style(success_msg, fg="green"))
+            kce_logger.info(success_msg)
+
+        if errors:
+            error_summary_msg = f"Encountered {len(errors)} errors during definition loading from {path_obj}:"
+            click.echo(click.style(error_summary_msg, fg="yellow"))
+            kce_logger.warning(error_summary_msg)
+            for err_info in errors:
+                if isinstance(err_info, dict):
+                    file_loc = err_info.get('file', 'N/A')
+                    error_msg_detail = err_info.get('error', 'Unknown error')
+                    log_line = f"  File: {file_loc}, Error: {error_msg_detail}"
+                    click.echo(log_line, err=True)
+                    kce_logger.error(log_line)
+                else:
+                    malformed_err_log = f"  Malformed error info: {err_info}"
+                    click.echo(malformed_err_log, err=True)
+                    kce_logger.error(malformed_err_log)
+            # Consider if CLI should exit with error code if any errors occurred
+            # click.echo(click.style("Definition loading completed with errors.", fg="red"), err=True)
+            # sys.exit(1) # Uncomment to exit on any definition error
+
+        if loaded_count == 0 and not errors:
+            no_defs_msg = f"No definition documents found or processed in directory {path_obj}."
+            click.echo(no_defs_msg)
+            kce_logger.info(no_defs_msg)
+
+        # Optional: Explicitly trigger reasoning if desired after loading definitions.
+        # This is a design choice - should loading defs auto-trigger reasoning?
+        # For now, it's a separate step if user wants it (e.g. via a 'reason' command or a flag here)
+        # if loaded_count > 0 and ctx.knowledge_layer:
+        #     click.echo("Triggering reasoning on Knowledge Layer after loading definitions...")
+        #     kce_logger.info("Triggering reasoning post definition load.")
+        #     ctx.knowledge_layer.trigger_reasoning()
+        #     click.echo("Reasoning complete.")
+        #     kce_logger.info("Reasoning post definition load complete.")
+
+    except DefinitionError as e: # Custom DefinitionError from segment 1
+        kce_logger.error(f"Definition error loading from {path_obj}: {e}", exc_info=ctx.verbose)
+        click.echo(click.style(f"Definition Error: {e}", fg="red"), err=True)
+        sys.exit(1)
+    except KCEError as e: # General KCEError from segment 1
+        kce_logger.error(f"KCE error loading definitions from {path_obj}: {e}", exc_info=ctx.verbose)
+        click.echo(click.style(f"KCE Error: {e}", fg="red"), err=True)
+        sys.exit(1)
+    except Exception as e:
+        kce_logger.critical(f"Unexpected error during definition loading from {path_obj}: {e}", exc_info=True) # Use critical for unexpected
+        click.echo(click.style(f"Unexpected Error: {e}", fg="red"), err=True)
+        sys.exit(1)

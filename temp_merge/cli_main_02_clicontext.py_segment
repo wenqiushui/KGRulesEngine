@@ -1,0 +1,18 @@
+# --- Click Context Object (to share state between CLI commands) ---
+class CliContext:
+    def __init__(self):
+        self.db_path: Optional[Path] = None
+        # self.ontology_paths: List[Path] = [] # If needed for init
+        self.verbose: bool = False
+        self.base_script_path: Optional[Path] = None # For NodeExecutor script resolution
+
+        # Attributes for new layer instances
+        self.knowledge_layer: Optional[IKnowledgeLayer] = None
+        self.definition_loader: Optional[IDefinitionTransformationLayer] = None
+        self.runtime_logger: Optional[IRuntimeStateLogger] = None
+        self.node_executor: Optional[INodeExecutor] = None
+        self.rule_engine: Optional[IRuleEngine] = None
+        self.plan_executor: Optional[IPlanExecutor] = None
+        self.planner: Optional[IPlanner] = None
+
+pass_cli_context = click.make_pass_decorator(CliContext, ensure=True)
