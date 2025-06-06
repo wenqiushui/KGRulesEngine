@@ -1,0 +1,63 @@
+# --- CLI Commands ---
+
+@cli.command("init-db")
+@click.option('--core-ontology-file', type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+              default=str(DEFAULT_ONTOLOGY_DIR / "kce_core_ontology.ttl"), # DEFAULT_ONTOLOGY_DIR from segment 1
+              help="Path to the KCE core ontology file to load after clearing.")
+@pass_cli_context
+def init_db(ctx: CliContext, core_ontology_file: str):
+    """Clears all data in the KCE store and loads the core ontology."""
+    if not ctx.knowledge_layer:
+        kce_logger.error("KnowledgeLayer not initialized. Cannot init-db.")
+        click.echo("Error: KnowledgeLayer not initialized.", err=True)
+        sys.exit(1)
+
+    db_id = str(ctx.db_path) if ctx.db_path and ctx.db_path.name != "" else 'in-memory store' # Get path string or 'in-memory'
+    try:
+        click.confirm(f"This will clear all data in '{db_id}'. Continue?", abort=True)
+
+        # Re-initialize RdfStoreManager to clear and reload ontology.
+        # This is a straightforward way to ensure a clean state with the core ontology.
+        core_ont_path_obj = Path(core_ontology_file)
+        ont_files_to_load = [str(core_ont_path_obj)] if core_ont_path_obj.exists() else []
+
+        if not ont_files_to_load and Path(core_ontology_file).name == "kce_core_ontology.ttl": # Check if it was the default one that's missing
+             kce_logger.warning(f"Core KCE ontology file not found at {core_ontology_file}. Store will be cleared but may be missing core schema.")
+        elif not ont_files_to_load: # If a custom path was given and not found (though click should prevent this)
+             kce_logger.warning(f"Specified ontology file {core_ontology_file} not found. Store will be cleared but may be missing schema.")
+
+        actual_db_path_for_reinit = str(ctx.db_path) if ctx.db_path and ctx.db_path.name != "" else None
+
+        # Close existing connection if RdfStoreManager has a close method
+        if hasattr(ctx.knowledge_layer, 'close') and callable(getattr(ctx.knowledge_layer, 'close')):
+            try:
+                ctx.knowledge_layer.close()
+                kce_logger.info("Closed existing Knowledge Layer connection before re-initializing.")
+            except Exception as close_err:
+                kce_logger.warning(f"Error closing existing Knowledge Layer: {close_err}")
+
+        # Re-assign the knowledge_layer in the context
+        # This implicitly clears the old store if it's file-based and a new one is created
+        # For SQLiteStore, re-opening with create=True on an existing file effectively clears it for rdflib graph.
+        ctx.knowledge_layer = RdfStoreManager(
+            db_path=actual_db_path_for_reinit,
+            ontology_files=ont_files_to_load
+        )
+        # Re-initialize DTL as it depends on KL
+        ctx.definition_loader = DefinitionLoader(knowledge_layer=ctx.knowledge_layer)
+
+        click.echo(f"Store '{db_id}' effectively cleared and core ontology reloaded (if found).")
+        kce_logger.info(f"Database '{db_id}' re-initialized.")
+
+    except KCEError as e: # KCEError from segment 1
+        kce_logger.error(f"Error during DB re-initialization: {e}", exc_info=ctx.verbose)
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except click.exceptions.Abort: # Catch click's Abort exception
+        click.echo("Operation aborted by user.")
+        kce_logger.info("init-db operation aborted by user.")
+        sys.exit(0)
+    except Exception as e:
+        kce_logger.error(f"Unexpected error during DB re-initialization: {e}", exc_info=ctx.verbose)
+        click.echo(f"Unexpected Error: {e}", err=True)
+        sys.exit(1)

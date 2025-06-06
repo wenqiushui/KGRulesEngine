@@ -1,0 +1,4 @@
+if __name__ == '__main__':
+    # This allows running the CLI directly using `python cli/main.py`
+    # For a proper installable CLI, setup.py entry_points would be used.
+    cli()
