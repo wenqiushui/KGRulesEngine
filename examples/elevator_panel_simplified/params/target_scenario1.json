@@ -1,3 +1,0 @@
-{
-    "sparql_ask_query": "ASK { ?s ?p ?o }"
-}

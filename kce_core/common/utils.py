@@ -70,7 +70,7 @@ def get_value_from_graph(graph: rdflib.Graph,
 
 def create_rdf_graph_from_json_ld_dict(json_ld_dict: Dict, default_base_ns_str: Optional[str]=None) -> rdflib.Graph:
     g = rdflib.Graph()
-    effective_base_ns_str = default_base_ns_str if default_base_ns_str else KCE_NS_STR
+    effective_base_ns_str = default_base_ns_str if default_base_ns_str else EX_NS_STR
     if not effective_base_ns_str.endswith(('#', '/')): effective_base_ns_str += "#"
     base_ns = rdflib.Namespace(effective_base_ns_str)
     context = json_ld_dict.get("@context", {})
@@ -125,12 +125,7 @@ def graph_to_json_ld_string(graph: rdflib.Graph, context: Optional[Dict] = None,
             s_val, p_val = str(s), str(p)
             o_val_dict: Dict[str, Any] = {}
             if isinstance(o, rdflib.URIRef): o_val_dict = {"@id": str(o)}
-            elif isinstance(o, rdflib.Literal):
-                o_val_dict = {"@value": o.toPython()}
-                if o.language:
-                    o_val_dict["@language"] = o.language
-                if o.datatype:
-                    o_val_dict["@type"] = str(o.datatype)
+            elif isinstance(o, rdflib.Literal): o_val_dict = {"@value": o.toPython()}; if o.language: o_val_dict["@language"] = o.language; if o.datatype: o_val_dict["@type"] = str(o.datatype)
             else: o_val_dict = {"@id": str(o)} # BNode as @id (or str(o) directly)
             found = False
             for item in output_list:

@@ -1,15 +1,13 @@
 import rdflib
 from rdflib.plugins.sparql import prepareQuery, prepareUpdate
-from rdflib.store import Store
-from rdflib import plugin
-# from sqlalchemy import create_engine # Not directly needed if dburi is used with SQLAlchemyStore
+from rdflib_sqlalchemy.store import SQLAlchemyStore
+# from sqlalchemy import create_engine # Not strictly needed if only dburi is used by SQLAlchemyStore
 import owlrl
 from typing import List, Dict, Any, Optional, Union
 import os
-import logging # For logging
-from pathlib import Path # For path manipulation
+import logging
+from pathlib import Path # Ensure Path is imported
 
-# Assuming interfaces.py is two levels up from rdf_store directory
 from ...interfaces import IKnowledgeLayer, RDFGraph, SPARQLQuery, SPARQLUpdate, LogLocation
 
 kce_logger = logging.getLogger(__name__) # Use module-specific logger
@@ -36,11 +34,8 @@ class RdfStoreManager(IKnowledgeLayer):
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.graph_identifier = rdflib.URIRef("kce_default_graph")
-        # Use plugin to get SQLAlchemyStore
-        self.store = plugin.get("SQLAlchemy", Store)(identifier=self.graph_identifier, configuration=self.db_uri)
+        self.store = SQLAlchemyStore(identifier=self.graph_identifier, dburi=self.db_uri, string_diff_patch=True)
         self.graph = rdflib.Graph(store=self.store, identifier=self.graph_identifier)
-        # For SQLAlchemyStore, open() is not typically called after graph creation with store.
-        # The store manages its connection. If the DB needs creation, it's handled by SQLAlchemy.
 
         if ontology_files:
             for ont_file in ontology_files:
@@ -56,23 +51,22 @@ class RdfStoreManager(IKnowledgeLayer):
             self.graph.commit() # Commit after loading ontologies
 
     def execute_sparql_query(self, query: SPARQLQuery) -> Union[List[Dict[str, Any]], bool, RDFGraph]:
-        prepared_query = prepareQuery(query, initNs=dict(self.graph.namespaces())) # Pass known namespaces
+        init_ns = {pfx: str(ns) for pfx, ns in self.graph.namespaces()}
+        prepared_query = prepareQuery(query, initNs=init_ns)
         q_result = self.graph.query(prepared_query)
 
-        # Determine query type based on the result object's characteristics
-        # rdflib's graph.query() returns different types based on query type
-        if isinstance(q_result, bool): # ASK query returns a boolean
-            return q_result
-        elif isinstance(q_result, rdflib.graph.Graph): # CONSTRUCT/DESCRIBE query returns a Graph
-            return q_result
-        elif hasattr(q_result, 'bindings'): # SELECT query returns a Result object with bindings
-            return [dict(row.items()) for row in q_result]
-        else:
-            kce_logger.warning(f"Unknown or unhandled SPARQL query result type: {type(q_result)}")
-            return q_result # Fallback, should be one of the above for valid queries
+        if prepared_query.query_type == 'ASK': return q_result.askAnswer # type: ignore [attr-defined]
+        elif prepared_query.query_type == 'SELECT':
+            # Correctly convert ResultRow objects to dictionaries
+            return [row.asdict() for row in q_result]
+        elif prepared_query.query_type in ['CONSTRUCT', 'DESCRIBE']: return q_result.graph # type: ignore [attr-defined]
+        kce_logger.warning(f"Unknown or unhandled SPARQL query type: {prepared_query.query_type}")
+        if isinstance(q_result, list): return q_result
+        return [] # Default empty list for unknown results
 
     def execute_sparql_update(self, update_statement: SPARQLUpdate) -> None:
-        prepared_update = prepareUpdate(update_statement, initNs=dict(self.graph.namespaces()))
+        init_ns = {pfx: str(ns) for pfx, ns in self.graph.namespaces()}
+        prepared_update = prepareUpdate(update_statement, initNs=init_ns)
         self.graph.update(prepared_update)
         self.graph.commit()
 
@@ -88,16 +82,15 @@ class RdfStoreManager(IKnowledgeLayer):
 
     def add_graph(self, graph_to_add: RDFGraph, context_uri: Optional[str] = None) -> None:
         target_graph = self.graph
+        log_msg_context = "default graph"
         if context_uri:
-            # SQLAlchemyStore uses the graph identifier to distinguish named graphs
             target_graph = rdflib.Graph(store=self.store, identifier=rdflib.URIRef(context_uri))
-            kce_logger.debug(f"Adding {len(graph_to_add)} triples to named graph: {context_uri}")
-        else:
-            kce_logger.debug(f"Adding {len(graph_to_add)} triples to default graph.")
+            log_msg_context = f"named graph: {context_uri}"
 
         for triple in graph_to_add:
             target_graph.add(triple)
-        target_graph.commit() # Commit the graph where triples were added
+        target_graph.commit()
+        kce_logger.debug(f"Added {len(graph_to_add)} triples to {log_msg_context}.")
 
     def get_graph(self, context_uri: Optional[str] = None) -> RDFGraph:
         if context_uri:
@@ -119,27 +112,16 @@ class RdfStoreManager(IKnowledgeLayer):
     def get_human_readable_log(self, log_location: LogLocation) -> Optional[str]:
         log_file = Path(log_location)
         try:
-            if log_file.exists() and log_file.is_file():
-                return log_file.read_text(encoding='utf-8')
-            else:
-                kce_logger.warning(f"Human-readable log file not found at: {log_location}")
-                return None
+            if log_file.is_file(): # Check if it's a file specifically
+                with open(log_file, "r", encoding='utf-8') as f: return f.read()
+            else: kce_logger.warning(f"Human-readable log file not found or is not a file: {log_location}"); return None
         except IOError as e:
             kce_logger.error(f"Error reading human-readable log {log_location}: {e}", exc_info=True)
             return None
 
-    def clear_store(self):
-        """Clears all triples from the default graph and commits the changes."""
-        self.graph.remove((None, None, None)) # Remove all triples
-        self.graph.commit()
-        kce_logger.info(f"RdfStoreManager for {self.db_uri} has been cleared.")
-
     def close(self):
         if self.graph is not None: self.graph.close()
-        # SQLAlchemyStore might require explicit disposal of engine if created by us
-        # but if dburi is used, it often manages its own engine lifecycle to some extent.
-        # self.store.destroy() # Or similar if available and needed
-        kce_logger.info(f"RdfStoreManager for {self.db_uri} operations concluded (graph closed).")
+        kce_logger.info(f"RdfStoreManager for {self.db_uri} closed.")
 
     def __enter__(self): return self
     def __exit__(self, exc_type, exc_val, exc_tb): self.close()

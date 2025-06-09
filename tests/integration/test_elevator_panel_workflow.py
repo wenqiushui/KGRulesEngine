@@ -2,7 +2,6 @@
 
 import pytest
 import logging
-import sys # Import sys
 from pathlib import Path
 import json
 import uuid # For generating run_ids
@@ -25,7 +24,7 @@ from kce_core.planning_reasoning_core_layer.planner import Planner
 
 # Utilities and logger (assuming kce_logger is exported from kce_core.__init__)
 from kce_core import kce_logger, KCE, EX, RDF, RDFS # Namespaces from kce_core.__init__
-from kce_core.common.utils import load_json_file, create_rdf_graph_from_json_ld_dict
+from kce_core.common.utils import load_json_file # to_uriref not used directly here yet
 
 # --- Test Configuration ---
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent.parent # Project root
@@ -40,43 +39,52 @@ DOMAIN_ONTOLOGY_FILE = DEFAULT_ONTOLOGY_DIR / "elevator_panel_simplified.ttl"
 SCENARIO1_PARAMS_FILE = EXAMPLE_PARAMS_DIR / "scenario1_params.json"
 SCENARIO1_TARGET_FILE = EXAMPLE_PARAMS_DIR / "target_scenario1.json"
 
-# @pytest.fixture(scope="module") # Removed duplicate fixture decorator
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def kce_test_environment_components():
-    # Configure logging for kce_core to DEBUG level
-    logging.basicConfig(level=logging.DEBUG) # Set root logger to DEBUG
-    kce_core_logger = logging.getLogger('kce_core')
-    kce_core_logger.setLevel(logging.DEBUG)
-    # Ensure handlers are set up to output to console
-    if not kce_core_logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter('%(levelname)s:%(name)s:%(filename)s:%(lineno)d:%(message)s')
-        handler.setFormatter(formatter)
-        kce_core_logger.addHandler(handler)
-
-    # Initialize RDF store manager
-    kl = RdfStoreManager(db_path=None, ontology_files=[str(CORE_ONTOLOGY_FILE), str(DOMAIN_ONTOLOGY_FILE)]) # Use in-memory for testing
-    # kl.load_ontology(CORE_ONTOLOGY_PATH) # Removed as ontologies are loaded in constructor
-    # kl.load_ontology(DOMAIN_ONTOLOGY_PATH) # Removed as ontologies are loaded in constructor
-
     """Sets up KCE components for testing."""
     # Ensure test output is verbose for debugging
-    # This is handled by the logging configuration above
+    if not kce_logger.handlers or isinstance(kce_logger.handlers[0], logging.NullHandler):
+        if kce_logger.handlers: kce_logger.removeHandler(kce_logger.handlers[0]) # Remove NullHandler if present
+        test_handler = logging.StreamHandler(sys.stdout)
+        test_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        test_handler.setFormatter(test_formatter)
+        kce_logger.addHandler(test_handler)
+    kce_logger.setLevel(logging.DEBUG)
 
-    definition_loader = DefinitionLoader(kl)
-    # Load example definitions
-    definition_loader.load_definitions_from_path(EXAMPLE_DEFS_DIR)
-    kl.trigger_reasoning() # Trigger reasoning after loading definitions
+    ontology_files_to_load = []
+    if CORE_ONTOLOGY_FILE.exists(): ontology_files_to_load.append(str(CORE_ONTOLOGY_FILE))
+    else: pytest.fail(f"Core KCE ontology not found: {CORE_ONTOLOGY_FILE}")
+    if DOMAIN_ONTOLOGY_FILE.exists(): ontology_files_to_load.append(str(DOMAIN_ONTOLOGY_FILE))
+    # Domain ontology might not exist yet, so make this optional for now or create a dummy one
+    # else: pytest.fail(f"Domain ontology not found: {DOMAIN_ONTOLOGY_FILE}")
+    if not (DOMAIN_ONTOLOGY_FILE.exists()): kce_logger.warning(f"Domain ontology {DOMAIN_ONTOLOGY_FILE} not found, proceeding without it.")
 
-    # Initialize Planner, PlanExecutor, RuleEngine
-    runtime_logger = RuntimeStateLogger()
-    node_executor = NodeExecutor(knowledge_layer=kl) # Initialize NodeExecutor
-    planner = Planner(runtime_state_logger=runtime_logger)
-    plan_executor = PlanExecutor(node_executor=node_executor, runtime_state_logger=runtime_logger)
-    rule_engine = RuleEngine(runtime_state_logger=runtime_logger)
+    knowledge_layer: IKnowledgeLayer = RdfStoreManager(db_path=None, ontology_files=ontology_files_to_load)
+    kce_logger.info(f"Loaded ontologies into in-memory RdfStoreManager.")
 
-    yield {
-        "knowledge_layer": kl,
+    definition_loader: IDefinitionTransformationLayer = DefinitionLoader(knowledge_layer=knowledge_layer)
+
+    if not EXAMPLE_DEFS_DIR.exists(): pytest.fail(f"Example definitions directory not found: {EXAMPLE_DEFS_DIR}")
+    load_status = definition_loader.load_definitions_from_path(str(EXAMPLE_DEFS_DIR))
+    if load_status.get("errors"):
+        pytest.fail(f"Errors loading definitions from {EXAMPLE_DEFS_DIR}: {load_status['errors']}")
+    kce_logger.info(f"Loaded {load_status.get('loaded_definitions_count')} definition documents from {EXAMPLE_DEFS_DIR}")
+
+    knowledge_layer.trigger_reasoning()
+    kce_logger.info("Reasoning performed after definition loading.")
+
+    runtime_logger: IRuntimeStateLogger = RuntimeStateLogger()
+    node_executor: INodeExecutor = NodeExecutor()
+    rule_engine: IRuleEngine = RuleEngine(runtime_state_logger=runtime_logger)
+    plan_executor: IPlanExecutor = PlanExecutor(
+        node_executor=node_executor,
+        runtime_state_logger=runtime_logger,
+        rule_engine=rule_engine
+    )
+    planner: IPlanner = Planner(runtime_state_logger=runtime_logger)
+
+    return {
+        "knowledge_layer": knowledge_layer,
         "definition_loader": definition_loader,
         "planner": planner,
         "plan_executor": plan_executor,
@@ -84,51 +92,31 @@ def kce_test_environment_components():
         "runtime_logger": runtime_logger
     }
 
-    # Teardown: Clean up the in-memory store after each test function
-    kl.clear_store()
-
-
 def test_elevator_panel_scenario_1(kce_test_environment_components):
-    kl = kce_test_environment_components["knowledge_layer"]
-    planner = kce_test_environment_components["planner"]
-    ple = kce_test_environment_components["plan_executor"]
-    re = kce_test_environment_components["rule_engine"]
-    runtime_logger = kce_test_environment_components["runtime_logger"]
+    """Tests end-to-end execution for elevator panel scenario 1 using the Planner."""
+    kl: IKnowledgeLayer = kce_test_environment_components["knowledge_layer"]
+    dl: IDefinitionTransformationLayer = kce_test_environment_components["definition_loader"]
+    planner: IPlanner = kce_test_environment_components["planner"]
+    ple: IPlanExecutor = kce_test_environment_components["plan_executor"]
+    re: IRuleEngine = kce_test_environment_components["rule_engine"]
 
-    # Generate a unique run ID for this test execution
-    run_id = f"test_run_{uuid.uuid4().hex}"
+    if not SCENARIO1_TARGET_FILE.exists(): pytest.fail(f"Scenario target file not found: {SCENARIO1_TARGET_FILE}")
+    target_desc_data = load_json_file(str(SCENARIO1_TARGET_FILE))
+    assert "sparql_ask_query" in target_desc_data, "Target description must contain 'sparql_ask_query'"
+    target_description: TargetDescription = target_desc_data
 
-    # Load target description and initial parameters
-    target_description_path = EXAMPLE_PARAMS_DIR / "target_scenario1.json"
-    initial_params_path = EXAMPLE_PARAMS_DIR / "scenario1_params.json"
+    if not SCENARIO1_PARAMS_FILE.exists(): pytest.fail(f"Scenario parameters file not found: {SCENARIO1_PARAMS_FILE}")
+    with open(SCENARIO1_PARAMS_FILE, 'r', encoding='utf-8') as f: initial_state_json_str = f.read()
 
-    with open(target_description_path, 'r', encoding='utf-8') as f:
-        target_description = json.load(f)
+    run_id = f"test_run_{uuid.uuid4()}"
+    # The base_uri for problem instances should be distinct for each run or problem to avoid clashes.
+    # Using a UUID in the path or a run-specific segment.
+    instance_base_uri = f"http://example.com/instances/{run_id}/problem_data#" # Added '#' for proper URI construction
 
+    initial_state_rdf: RDFGraph = dl.load_initial_state_from_json(initial_state_json_str, base_uri=instance_base_uri)
+    kce_logger.info(f"Loaded initial state for run {run_id} ({len(initial_state_rdf)} triples).")
 
-    with open(initial_params_path, 'r', encoding='utf-8') as f:
-        initial_params_json = json.load(f)
-
-    # Convert initial parameters to RDF graph
-    instance_base_uri = "http://kce.com/instances/"
-    initial_state_rdf = create_rdf_graph_from_json_ld_dict(initial_params_json, instance_base_uri)
-    kce_logger.info(f"Initial state RDF graph loaded with {len(initial_state_rdf)} triples.")
-
-    initial_params_instance_uri = URIRef(instance_base_uri + "ScenarioParameters_Scenario1")
-
-    # Remove the redundant initial_state_graph loading and the try-except block
-    # initial_state_graph = kl.load_initial_state_from_json_ld(initial_state_json_str, initial_params_instance_uri)
-    # kce_logger.info(f"Initial state graph loaded with {len(initial_state_graph)} triples.")
-
-    # Add debug print to check loaded AtomicNodes
-    node_count_query = f"""PREFIX kce: <http://kce.com/ontology/core#> SELECT (COUNT(?node) AS ?count) WHERE {{ ?node a kce:AtomicNode . }}"""
-    node_count_results = kl.execute_sparql_query(node_count_query)
-    if isinstance(node_count_results, list) and node_count_results and 'count' in node_count_results[0]:
-        kce_logger.info(f"Knowledge Layer contains {node_count_results[0]['count']} AtomicNodes before planner.solve.")
-    else:
-        kce_logger.warning("Could not query AtomicNode count.")
-
-    # Original planner.solve call
+    kce_logger.info(f"Invoking Planner for target: {target_description.get('target_description_label', 'N/A')}")
     execution_result: ExecutionResult = planner.solve(
         target_description=target_description,
         initial_state_graph=initial_state_rdf,
@@ -146,8 +134,17 @@ def test_elevator_panel_scenario_1(kce_test_environment_components):
     assert goal_achieved_check is True, "Final goal state (as per target SPARQL ASK) not achieved in RDF store."
     kce_logger.info("Target goal ASK query confirmed True in the knowledge layer after planning.")
 
-    # Further assertions based on the final state of the knowledge layer
-    # For scenario 1, we expect the assembly cost to be calculated.
+    # Example of querying for a specific output (optional, good for debugging)
+    # This query assumes that the 'InitializeRearWallNode' (or similar) creates an assembly
+    # and links it via 'ex:createdRearWallAssemblyURI' to the initial parameter context.
+    # The initial parameter context ID is 'ex:ScenarioParameters_Scenario1' from scenario1_params.json
+    # which gets loaded under instance_base_uri.
+
+    # Note: The original test had a fixed context URI. Here, it's dynamic with run_id.
+    # For a robust query, the link between initial params and output assembly needs to be clear.
+    # If InitializeRearWallNode sets ex:createdRearWallAssemblyURI on the @id from scenario1_params.json, we can query it.
+    initial_params_instance_uri = URIRef(instance_base_uri + "ScenarioParameters_Scenario1")
+
     query_final_cost = f"""
     PREFIX ex: <{EX}>
     PREFIX domain: <{Namespace('http://kce.com/example/elevator_panel#')}>
@@ -165,10 +162,7 @@ def test_elevator_panel_scenario_1(kce_test_environment_components):
     kce_logger.info(f"Final assembly total cost from query: {cost_results[0]['total_cost']}")
     assert float(cost_results[0]['total_cost']) > 0, "Assembly total cost should be greater than 0."
 
-# Helper function to load definitions from YAML files
-# def load_yaml_definitions(file_path):
-#     with open(file_path, 'r') as f:
-#         return yaml.safe_load_all(f)
-
+# To run this test:
+# 1. Ensure all example files (definitions, params, target, scripts) are correctly updated and in place.
+# 2. Ensure kce_core (including loader.py) is updated.
 # 3. Run pytest from the project root: `pytest tests/integration/test_elevator_panel_workflow.py`
-

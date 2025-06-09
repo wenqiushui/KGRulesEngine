@@ -1,18 +1,16 @@
 import yaml
 import json
 import os
-from pathlib import Path
-import logging
-from typing import Any, Dict, List, Optional, Union
-import yaml
-
+from pathlib import Path # Added Path
 from rdflib import Graph, URIRef, Literal, Namespace
-import uuid # For fallback URI generation
 from rdflib.namespace import RDF, RDFS, XSD
+import uuid # For fallback URI generation
+import logging # For kce_logger
 
-from kce_core.interfaces import IDefinitionTransformationLayer, RDFGraph, LoadStatus, InitialStateGraph, DirectoryPath, IKnowledgeLayer
-from kce_core.common.exceptions import KCEError, DefinitionError
-from kce_core.common.utils import create_rdf_graph_from_json_ld_dict
+# Assuming interfaces.py is two levels up from definition_transformation_layer directory
+from ..interfaces import IDefinitionTransformationLayer, IKnowledgeLayer, LoadStatus, InitialStateGraph, DirectoryPath
+from ..common.exceptions import KCEError, DefinitionError # Assuming exceptions are in common
+from ..common.utils import create_rdf_graph_from_json_ld_dict # For initial state
 
 # Setup logger for this module - typically it would inherit from a root kce_core logger
 kce_logger = logging.getLogger(__name__)
@@ -46,13 +44,12 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                 return self.kce_ns_map[prefix][local_name]
         if value.startswith("http://") or value.startswith("https://") or value.startswith("urn:"):
             return URIRef(value)
-        # If no prefix and not a full URI, default to KCE namespace
-        kce_logger.debug(f"No prefix found for '{value}', defaulting to KCE namespace: {KCE[value]}")
-        return KCE[value] # Fallback
+        kce_logger.debug(f"No prefix found for '{value}', defaulting to EX namespace: {EX[value]}")
+        return EX[value] # Fallback
 
     def _parse_node_definition(self, data: Dict, file_path_str: str) -> Graph:
         g = Graph()
-        node_uri_str = data.get("id") or data.get("uri")
+        node_uri_str = data.get("uri")
         if not node_uri_str:
             node_uri_str = f"urn:uuid:{uuid.uuid4()}"
             kce_logger.warning(f"Node definition in {file_path_str} missing 'uri'. Generated: {node_uri_str}")
@@ -73,10 +70,10 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                     param_uri = self._prefix_uri(param_uri_str)
                     g.add((param_uri, RDF.type, param_rdf_type))
                     g.add((param_uri, RDFS.label, Literal(param_name)))
-                    if p_data.get("mapsToRdfProperty") or p_data.get("maps_to_rdf_property"): g.add((param_uri, KCE.mapsToRdfProperty, self._prefix_uri(p_data.get("mapsToRdfProperty") or p_data.get("maps_to_rdf_property"))))
+                    if "mapsToRdfProperty" in p_data: g.add((param_uri, KCE.mapsToRdfProperty, self._prefix_uri(p_data["mapsToRdfProperty"])))
                     if "datatype" in p_data: g.add((param_uri, KCE.hasDatatype, self._prefix_uri(p_data["datatype"])))
-                    if p_data.get("is_required") is not None and param_type_key == "inputs":
-                        g.add((param_uri, KCE.isRequired, Literal(bool(p_data["is_required"]), datatype=XSD.boolean)))
+                    if "isRequired" in p_data and param_type_key == "inputs":
+                        g.add((param_uri, KCE.isRequired, Literal(bool(p_data["isRequired"]), datatype=XSD.boolean)))
                     g.add((node_uri, kce_predicate, param_uri))
 
         if "implementation" in data:
@@ -101,7 +98,7 @@ class DefinitionLoader(IDefinitionTransformationLayer):
 
     def _parse_rule_definition(self, data: Dict, file_path_str: str) -> Graph:
         g = Graph()
-        rule_uri_str = data.get("id") or data.get("uri")
+        rule_uri_str = data.get("uri")
         if not rule_uri_str: rule_uri_str = f"urn:uuid:{uuid.uuid4()}"
         rule_uri = self._prefix_uri(rule_uri_str)
         g.add((rule_uri, RDF.type, KCE.Rule))
@@ -116,35 +113,6 @@ class DefinitionLoader(IDefinitionTransformationLayer):
     def _parse_capability_template_definition(self, data: Dict, file_path_str: str) -> Graph:
         g = Graph()
         kce_logger.warning(f"CapabilityTemplate parsing not fully implemented. Skipping item in {file_path_str}")
-        return g
-
-    def _parse_workflow_definition(self, data: Dict, file_path_str: str) -> Graph:
-        g = Graph()
-        workflow_uri_str = data.get("id") or data.get("uri")
-        if not workflow_uri_str:
-            workflow_uri_str = f"urn:uuid:{uuid.uuid4()}"
-            kce_logger.warning(f"Workflow definition in {file_path_str} missing 'id' or 'uri'. Generated: {workflow_uri_str}")
-        workflow_uri = self._prefix_uri(workflow_uri_str)
-        g.add((workflow_uri, RDF.type, KCE.Workflow))
-        if "label" in data: g.add((workflow_uri, RDFS.label, Literal(data["label"])))
-        if "description" in data: g.add((workflow_uri, RDFS.comment, Literal(data["description"])))
-
-        if "steps" in data and isinstance(data["steps"], list):
-            for step_data in data["steps"]:
-                if not isinstance(step_data, dict): continue
-                executes_node_uri_str = step_data.get("executes_node_uri")
-                order = step_data.get("order")
-                if executes_node_uri_str and order is not None:
-                    step_uri_str = f"{workflow_uri_str}/step/{order}"
-                    step_uri = self._prefix_uri(step_uri_str)
-                    g.add((step_uri, RDF.type, KCE.WorkflowStep))
-                    g.add((step_uri, KCE.executesNode, self._prefix_uri(executes_node_uri_str)))
-                    g.add((step_uri, KCE.hasOrder, Literal(int(order), datatype=XSD.integer)))
-                    g.add((workflow_uri, KCE.hasStep, step_uri))
-                else:
-                    kce_logger.warning(f"Workflow step in {file_path_str} missing 'executes_node_uri' or 'order'. Skipping step.")
-
-        for prefix, namespace_obj in self.kce_ns_map.items(): g.bind(prefix, namespace_obj)
         return g
 
     def load_definitions_from_path(self, definitions_dir_path: DirectoryPath) -> LoadStatus:
@@ -164,39 +132,7 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                         for i, doc_data in enumerate(yaml_documents):
                             if not doc_data or not isinstance(doc_data, dict): continue
                             kce_logger.debug(f"Processing document {i+1} in {abs_file_path_str} (keys: {list(doc_data.keys())})")
-
-                            # Handle top-level 'nodes' key for lists of definitions
-                            if "nodes" in doc_data and isinstance(doc_data["nodes"], list):
-                                for j, node_data in enumerate(doc_data["nodes"]):
-                                    if not isinstance(node_data, dict): continue
-                                    rdf_graph = self._parse_node_definition(node_data, abs_file_path_str)
-                                    if rdf_graph and len(rdf_graph) > 0:
-                                        self.kl.add_graph(rdf_graph)
-                                        loaded_docs_count += 1
-                                continue # Skip further processing for this top-level document
-
-                            # Handle top-level 'rules' key for lists of definitions
-                            if "rules" in doc_data and isinstance(doc_data["rules"], list):
-                                for j, rule_data in enumerate(doc_data["rules"]):
-                                    if not isinstance(rule_data, dict): continue
-                                    rdf_graph = self._parse_rule_definition(rule_data, abs_file_path_str)
-                                    if rdf_graph and len(rdf_graph) > 0:
-                                        self.kl.add_graph(rdf_graph)
-                                        loaded_docs_count += 1
-                                continue # Skip further processing for this top-level document
-
-                            # Handle top-level 'workflows' key for lists of definitions
-                            if "workflows" in doc_data and isinstance(doc_data["workflows"], list):
-                                for j, workflow_data in enumerate(doc_data["workflows"]):
-                                    if not isinstance(workflow_data, dict): continue
-                                    rdf_graph = self._parse_workflow_definition(workflow_data, abs_file_path_str)
-                                    if rdf_graph and len(rdf_graph) > 0:
-                                        self.kl.add_graph(rdf_graph)
-                                        loaded_docs_count += 1
-                                continue # Skip further processing for this top-level document
-
-                            # Original handling for single definitions per document
-                            doc_kind = doc_data.get("kind") or doc_data.get("type")
+                            doc_kind = doc_data.get("kind")
                             rdf_graph = None
                             if doc_kind == "AtomicNode":
                                 rdf_graph = self._parse_node_definition(doc_data, abs_file_path_str)
@@ -204,22 +140,17 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                                 rdf_graph = self._parse_rule_definition(doc_data, abs_file_path_str)
                             elif doc_kind == "CapabilityTemplate":
                                 rdf_graph = self._parse_capability_template_definition(doc_data, abs_file_path_str)
-                            elif doc_kind == "Workflow":
-                                rdf_graph = self._parse_workflow_definition(doc_data, abs_file_path_str)
                             else:
-                                errors.append({"file": abs_file_path_str, "document_index": i, "error": f"Unknown 'kind' or 'type': {doc_kind}"})
+                                errors.append({"file": abs_file_path_str, "document_index": i, "error": f"Unknown 'kind': {doc_kind}"})
                                 continue
                             if rdf_graph and len(rdf_graph) > 0:
                                 self.kl.add_graph(rdf_graph)
                                 loaded_docs_count += 1
                     except yaml.YAMLError as ye:
-                        error_msg = f"YAML parsing error in {abs_file_path_str}: {ye}"
-                        errors.append({"file": abs_file_path_str, "error": error_msg})
-                        kce_logger.error(error_msg, exc_info=True)
+                        errors.append({"file": abs_file_path_str, "error": f"YAML parsing error: {ye}"})
                     except Exception as e:
-                        error_msg = f"General error processing file {abs_file_path_str}: {e}"
-                        errors.append({"file": abs_file_path_str, "error": error_msg})
-                        kce_logger.error(error_msg, exc_info=True)
+                        errors.append({"file": abs_file_path_str, "error": f"General error processing file: {e}"})
+                        kce_logger.error(f"Unhandled error processing {abs_file_path_str}: {e}", exc_info=True)
         kce_logger.info(f"Definition loading complete. Processed: {loaded_docs_count} documents. Errors: {len(errors)}.")
         return {"loaded_definitions_count": loaded_docs_count, "errors": errors}
 

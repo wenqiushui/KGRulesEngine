@@ -33,8 +33,9 @@ EX = rdflib.Namespace("http://example.com/ns#")
 
 
 class NodeExecutor(INodeExecutor):
-    def __init__(self, knowledge_layer: IKnowledgeLayer):
-        self.knowledge_layer = knowledge_layer
+    def __init__(self):
+        # Potentially load configuration for script execution environments, etc.
+        pass
 
     def _get_node_implementation_details(self, node_uri: str, knowledge_layer: IKnowledgeLayer) -> Dict[str, Any]:
         '''Retrieve node implementation details (e.g., script path, invocation type) from the KnowledgeLayer.'''

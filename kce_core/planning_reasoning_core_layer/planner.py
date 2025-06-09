@@ -39,7 +39,6 @@ class Planner(IPlanner):
             print(" ".join(log_msg_parts))
 
     def _check_goal_achieved(self, target_description: TargetDescription, knowledge_layer: IKnowledgeLayer, run_id: str) -> bool:
-
         # Assumes target_description contains a SPARQL ASK query to check if goal is met
         ask_query = target_description.get("sparql_ask_query")
         if not ask_query:
@@ -58,7 +57,6 @@ class Planner(IPlanner):
             return False
 
     def _find_relevant_nodes(self, current_goal_or_subgoal: TargetDescription, knowledge_layer: IKnowledgeLayer, run_id: str) -> List[rdflib.URIRef]:
-
         # MVP: Returns all AtomicNodes.
         # Future: Filter by effects declared to be relevant to achieving the current_goal_or_subgoal.
         # For now, current_goal_or_subgoal is not used to filter nodes.
@@ -111,7 +109,6 @@ class Planner(IPlanner):
         self._log_event(run_id, "PlanningProcessStart", None, "Started",
                         {"target_desc_type": str(type(target_description)), "mode": mode, "initial_state_size": len(initial_state_graph)},
                         None, "Planner starting problem resolution.", knowledge_layer)
-
 
         if initial_state_graph and len(initial_state_graph) > 0:
             knowledge_layer.add_graph(initial_state_graph, context_uri=rdflib.URIRef(f"urn:kce:run:{run_id}:initial_problem_state"))
@@ -190,8 +187,6 @@ class Planner(IPlanner):
                     self._log_event(run_id, "PostNodeRuleApplication", executable_node_uri_str, "Completed", None, {"rules_applied_in_cycle": False}, f"No rules applied post-node <{executable_node_uri_str}>.", knowledge_layer)
 
             else: # No executable node found in this iteration
-                import json
-                self._log_event(run_id, "Debug", None, "Info", {"unmet_preconditions_type": str(type(unmet_preconditions)), "unmet_preconditions_content": json.dumps(unmet_preconditions, indent=2)}, None, "Debug: unmet_preconditions before items()", knowledge_layer)
                 self._log_event(run_id, "NoExecutableNodeFound", None, "Failed",
                                 {"candidate_nodes_count": len(candidate_nodes), "unmet_preconditions_sample": dict(list(unmet_preconditions.items())[:3])}, # Log a sample of unmet
                                 None, "Planner stuck: no executable node found whose preconditions are met.", knowledge_layer)
