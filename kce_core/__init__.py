@@ -1,98 +1,90 @@
-# kce_core/__init__.py
+# kce_core/__init__.py (Refactored)
 
-import logging
+import logging # Keep for basic logging types if needed elsewhere
 
 # --- Package Information ---
-__version__ = "0.1.0" # KCE MVP version
-__author__ = "Your Name/Team Name" # Replace with actual author
-__email__ = "your.email@example.com" # Replace with actual email
+__version__ = "0.3.0-refactored" # KCE Refactored version
+__author__ = "KCE Development Team"
+__email__ = "dev@kce.example.com"
 
-# --- Setup a package-level logger (optional, can also rely on kce_logger from utils) ---
-# This logger can be used by modules within this package if they don't define their own.
-# It's often good practice for libraries not to configure the root logger directly,
-# but to provide their own named loggers.
-# We already have kce_logger in utils, which is fine. This is an alternative or supplement.
+# --- Import kce_logger directly from common.utils ---
+# This makes 'from kce_core import kce_logger' possible.
+from .common.utils import kce_logger
 
-# Get a logger specific to this package
-package_logger = logging.getLogger(__name__) # __name__ will be 'kce_core'
-if not package_logger.handlers: # Avoid adding handlers multiple times if re-imported
-    package_logger.addHandler(logging.NullHandler()) # Libraries should not add handlers by default
-                                                    # Application using the library configures logging.
-    # However, for internal KCE development and CLI, we might want some default.
-    # For now, let's assume the application (e.g., CLI) will set up logging,
-    # or individual modules use kce_logger from utils.py which has a basic setup.
+# --- Expose Key Interfaces and Classes for easier import ---
 
-# --- Expose Key Classes and Functions for easier import ---
-# This makes it possible to do `from kce_core import StoreManager`
-# instead of `from kce_core.rdf_store.store_manager import StoreManager`.
+# Interfaces
+from .interfaces import (
+    IKnowledgeLayer,
+    IDefinitionTransformationLayer,
+    IPlanner,
+    IPlanExecutor,
+    INodeExecutor,
+    IRuleEngine,
+    IRuntimeStateLogger,
+    # Data structures/types if they are part of the public API
+    TargetDescription,
+    RDFGraph,
+    ExecutionResult,
+    LoadStatus,
+    ExecutionPlan
+)
 
+# Concrete Implementations (optional, but often convenient for users)
+from .knowledge_layer.rdf_store.store_manager import RdfStoreManager
+from .definition_transformation_layer.loader import DefinitionLoader
+from .execution_layer.node_executor import NodeExecutor
+from .execution_layer.runtime_state_logger import RuntimeStateLogger
+from .execution_layer.plan_executor import PlanExecutor
+from .planning_reasoning_core_layer.rule_engine import RuleEngine
+from .planning_reasoning_core_layer.planner import Planner
+
+# Common utilities, exceptions, and namespaces (re-export from common.utils or common.exceptions)
 from .common.utils import (
-    kce_logger, # Re-exporting the logger from utils for convenience
+    # kce_logger is already imported above
+    generate_instance_uri,
+    get_value_from_graph,
+    create_rdf_graph_from_json_ld_dict,
+    graph_to_json_ld_string,
+    load_json_file,
+    to_uriref,
+    # Namespaces (ensure these are defined in common.utils and are the rdflib.Namespace objects)
+    KCE, EX, DOMAIN, RDF, RDFS, OWL, XSD, DCTERMS, PROV # Added DOMAIN
+)
+
+from .common.exceptions import (
+    KCEError,
     DefinitionError,
     RDFStoreError,
     ExecutionError,
-    ConfigurationError,
-    load_yaml_file,
-    load_json_file,
-    load_json_string,
-    to_uriref,
-    to_literal,
-    get_xsd_uriref,
-    generate_unique_id,
-    resolve_path,
-    # Namespaces are also useful to expose if users will construct RDF outside KCE
-    KCE, PROV, RDF, RDFS, OWL, XSD, DCTERMS, EX
+    ConfigurationError
 )
 
-from .rdf_store.store_manager import StoreManager
-from .rdf_store import sparql_queries # Expose the module itself for access to query strings
-
-from .definitions.loader import DefinitionLoader
-
-from .provenance.logger import ProvenanceLogger
-
-from .execution.node_executor import NodeExecutor
-from .execution.rule_evaluator import RuleEvaluator
-from .execution.workflow_executor import WorkflowExecutor
-
-
-# --- Optional: A simple function to get KCE version ---
+# --- Get KCE version ---
 def get_kce_version() -> str:
     """Returns the current version of the KCE package."""
     return __version__
 
-# --- Optional: Initialization message when the package is imported ---
-# Use with caution, can be verbose if kce_core is imported many times by different modules.
-# kce_logger.info(f"Knowledge-CAD-Engine (KCE) core library v{__version__} initialized.")
-# Or use the package_logger:
-# package_logger.info(f"Knowledge-CAD-Engine (KCE) core library v{__version__} initialized.")
-
-
-# --- Define what `from kce_core import *` imports (though `import *` is generally discouraged) ---
-# This is a good practice to explicitly state the public API of the package.
+# --- __all__ list for 'from kce_core import *' ---
 __all__ = [
-    # Loggers
+    # Logger
     "kce_logger",
     # Exceptions
-    "DefinitionError", "RDFStoreError", "ExecutionError", "ConfigurationError",
-    # Utility functions
-    "load_yaml_file", "load_json_file", "load_json_string",
-    "to_uriref", "to_literal", "get_xsd_uriref", "generate_unique_id", "resolve_path",
-    # Namespaces
-    "KCE", "PROV", "RDF", "RDFS", "OWL", "XSD", "DCTERMS", "EX",
-    # Core Classes
-    "StoreManager",
-    "DefinitionLoader",
-    "ProvenanceLogger",
-    "NodeExecutor",
-    "RuleEvaluator",
-    "WorkflowExecutor",
-    # Modules
-    "sparql_queries",
+    "KCEError", "DefinitionError", "RDFStoreError", "ExecutionError", "ConfigurationError",
+    # Core Interfaces
+    "IKnowledgeLayer", "IDefinitionTransformationLayer", "IPlanner",
+    "IPlanExecutor", "INodeExecutor", "IRuleEngine", "IRuntimeStateLogger",
+    # Concrete Implementations (if exposing directly)
+    "RdfStoreManager", "DefinitionLoader", "NodeExecutor", "RuntimeStateLogger",
+    "PlanExecutor", "RuleEngine", "Planner",
+    # Data types from interfaces (if public)
+    "TargetDescription", "RDFGraph", "ExecutionResult", "LoadStatus", "ExecutionPlan",
+    # Namespaces from common.utils
+    "KCE", "EX", "DOMAIN", "RDF", "RDFS", "OWL", "XSD", "DCTERMS", "PROV",
+    # Other key utilities from common.utils
+    "generate_instance_uri", "get_value_from_graph", "create_rdf_graph_from_json_ld_dict",
+    "graph_to_json_ld_string", "load_json_file", "to_uriref",
     # Package info
-    "get_kce_version",
-    "__version__",
+    "get_kce_version", "__version__",
 ]
 
-# A simple print statement to confirm the package is loaded (for development)
-# print(f"KCE Core Package (v{__version__}) loaded successfully.")
