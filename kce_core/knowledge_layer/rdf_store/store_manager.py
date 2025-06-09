@@ -1,6 +1,7 @@
 import rdflib
 from rdflib.plugins.sparql import prepareQuery, prepareUpdate
-from rdflib_sqlalchemy.store import SQLAlchemyStore
+from rdflib.store import Store
+from rdflib import plugin
 # from sqlalchemy import create_engine # Not directly needed if dburi is used with SQLAlchemyStore
 import owlrl
 from typing import List, Dict, Any, Optional, Union
@@ -35,7 +36,8 @@ class RdfStoreManager(IKnowledgeLayer):
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.graph_identifier = rdflib.URIRef("kce_default_graph")
-        self.store = SQLAlchemyStore(identifier=self.graph_identifier, dburi=self.db_uri, string_diff_patch=True)
+        # Use plugin to get SQLAlchemyStore
+        self.store = plugin.get("SQLAlchemy", Store)(identifier=self.graph_identifier, configuration=self.db_uri)
         self.graph = rdflib.Graph(store=self.store, identifier=self.graph_identifier)
         # For SQLAlchemyStore, open() is not typically called after graph creation with store.
         # The store manages its connection. If the DB needs creation, it's handled by SQLAlchemy.
@@ -57,11 +59,17 @@ class RdfStoreManager(IKnowledgeLayer):
         prepared_query = prepareQuery(query, initNs=dict(self.graph.namespaces())) # Pass known namespaces
         q_result = self.graph.query(prepared_query)
 
-        if prepared_query.query_type == 'ASK': return q_result.askAnswer # type: ignore [attr-defined]
-        elif prepared_query.query_type == 'SELECT': return [dict(row.items()) for row in q_result]
-        elif prepared_query.query_type in ['CONSTRUCT', 'DESCRIBE']: return q_result.graph # type: ignore [attr-defined]
-        kce_logger.warning(f"Unknown or unhandled SPARQL query type: {prepared_query.query_type}")
-        return q_result # Fallback, should be one of the above for valid queries
+        # Determine query type based on the result object's characteristics
+        # rdflib's graph.query() returns different types based on query type
+        if isinstance(q_result, bool): # ASK query returns a boolean
+            return q_result
+        elif isinstance(q_result, rdflib.graph.Graph): # CONSTRUCT/DESCRIBE query returns a Graph
+            return q_result
+        elif hasattr(q_result, 'bindings'): # SELECT query returns a Result object with bindings
+            return [dict(row.items()) for row in q_result]
+        else:
+            kce_logger.warning(f"Unknown or unhandled SPARQL query result type: {type(q_result)}")
+            return q_result # Fallback, should be one of the above for valid queries
 
     def execute_sparql_update(self, update_statement: SPARQLUpdate) -> None:
         prepared_update = prepareUpdate(update_statement, initNs=dict(self.graph.namespaces()))
@@ -119,6 +127,12 @@ class RdfStoreManager(IKnowledgeLayer):
         except IOError as e:
             kce_logger.error(f"Error reading human-readable log {log_location}: {e}", exc_info=True)
             return None
+
+    def clear_store(self):
+        """Clears all triples from the default graph and commits the changes."""
+        self.graph.remove((None, None, None)) # Remove all triples
+        self.graph.commit()
+        kce_logger.info(f"RdfStoreManager for {self.db_uri} has been cleared.")
 
     def close(self):
         if self.graph is not None: self.graph.close()
