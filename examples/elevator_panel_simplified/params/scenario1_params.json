@@ -1,4 +1,17 @@
 {
-  "ex:carInternalWidth": 1500,
-  "ex:carInternalHeight": 2450
+  "@context": {
+    "ex": "http://example.com/ns#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "domain": "http://kce.com/example/elevator_panel#"
+  },
+  "@id": "ex:ScenarioParameters_Scenario1",
+  "@type": "domain:CarInternalDimensions",
+  "ex:carInternalWidth": {
+    "@value": 1500,
+    "@type": "xsd:integer"
+  },
+  "ex:carInternalHeight": {
+    "@value": 2450,
+    "@type": "xsd:integer"
+  }
 }
