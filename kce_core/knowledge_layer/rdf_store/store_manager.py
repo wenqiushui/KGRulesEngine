@@ -1,197 +1,131 @@
-import sqlite3
 import rdflib
-from rdflib.plugins.stores.sparqlstore import SPARQLUpdateStore
-from rdflib_sqlite import SQLiteStore
+from rdflib.plugins.sparql import prepareQuery, prepareUpdate
+from rdflib_sqlalchemy.store import SQLAlchemyStore
+# from sqlalchemy import create_engine # Not directly needed if dburi is used with SQLAlchemyStore
 import owlrl
 from typing import List, Dict, Any, Optional, Union
+import os
+import logging # For logging
+from pathlib import Path # For path manipulation
 
-# Assuming interfaces.py is one level up from rdf_store directory
-from ..interfaces import IKnowledgeLayer, RDFGraph, SPARQLQuery, SPARQLUpdate, LogLocation
+# Assuming interfaces.py is two levels up from rdf_store directory
+from ...interfaces import IKnowledgeLayer, RDFGraph, SPARQLQuery, SPARQLUpdate, LogLocation
 
-# Assuming log_manager.py is in the same directory or path is adjusted
-# For now, let's assume it will be used internally or its functionality integrated.
-# from ..log_manager import LogManager # This might be instantiated or its methods called
+kce_logger = logging.getLogger(__name__) # Use module-specific logger
+if not kce_logger.handlers:
+    kce_logger.addHandler(logging.NullHandler()) # Library default
 
-# Default path for the SQLite database if not provided
-DEFAULT_DB_PATH = "data/kce_knowledge_base.sqlite"
-DEFAULT_LOG_DIR = "data/logs/" # For human-readable logs
+DEFAULT_DB_FILENAME = "kce_knowledge_base.sqlite"
+DEFAULT_DATA_DIR = Path("data") # Use Path object
+DEFAULT_LOG_DIR = DEFAULT_DATA_DIR / "logs"
 
 class RdfStoreManager(IKnowledgeLayer):
     def __init__(self, db_path: Optional[str] = None, ontology_files: Optional[List[str]] = None, log_dir: Optional[str] = None):
-        self.db_path = db_path if db_path else DEFAULT_DB_PATH
-        self.log_dir = log_dir if log_dir else DEFAULT_LOG_DIR
+        self.db_uri: str
+        if db_path is None or db_path == ':memory:': # Handle explicit in-memory
+            self.db_uri = "sqlite:///:memory:"
+            kce_logger.info("RdfStoreManager initialized with in-memory SQLite store using rdflib-sqlalchemy.")
+        else: # Persistent store
+            db_file_path = Path(db_path).resolve()
+            db_file_path.parent.mkdir(parents=True, exist_ok=True)
+            self.db_uri = f"sqlite:///{db_file_path}"
+            kce_logger.info(f"RdfStoreManager initialized with persistent SQLite store at: {self.db_uri} using rdflib-sqlalchemy.")
 
-        # Ensure data directory exists
-        import os
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        os.makedirs(self.log_dir, exist_ok=True)
+        self.log_dir = Path(log_dir if log_dir else DEFAULT_LOG_DIR).resolve()
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Configure the store
-        identifier = rdflib.URIRef("kce-graph")
-        self.store = SQLiteStore(database=self.db_path, autocommit=True)
-        self.graph = rdflib.Graph(store=self.store, identifier=identifier)
-        self.graph.open(self.db_path, create=True)
+        self.graph_identifier = rdflib.URIRef("kce_default_graph")
+        self.store = SQLAlchemyStore(identifier=self.graph_identifier, dburi=self.db_uri, string_diff_patch=True)
+        self.graph = rdflib.Graph(store=self.store, identifier=self.graph_identifier)
+        # For SQLAlchemyStore, open() is not typically called after graph creation with store.
+        # The store manages its connection. If the DB needs creation, it's handled by SQLAlchemy.
 
-        # Load ontologies if provided
         if ontology_files:
             for ont_file in ontology_files:
                 try:
-                    self.graph.parse(ont_file, format=rdflib.util.guess_format(ont_file))
-                    print(f"Successfully loaded ontology: {ont_file}")
+                    ont_path = Path(ont_file).resolve()
+                    if ont_path.exists() and ont_path.is_file():
+                        self.graph.parse(str(ont_path), format=rdflib.util.guess_format(str(ont_path)))
+                        kce_logger.info(f"Successfully loaded ontology: {ont_path}")
+                    else:
+                        kce_logger.warning(f"Ontology file not found: {ont_path}. Skipping.")
                 except Exception as e:
-                    print(f"Error loading ontology {ont_file}: {e}")
+                    kce_logger.error(f"Error loading ontology {ont_path}: {e}", exc_info=True)
+            self.graph.commit() # Commit after loading ontologies
 
-        # Initialize LogManager (example of integration)
-        # self.log_manager = LogManager(log_dir=self.log_dir, rdf_graph=self.graph) # If LogManager handles RDF logging too
-
-    def execute_sparql_query(self, query: SPARQLQuery) -> Union[List[Dict], bool, RDFGraph]:
-        '''Executes a SPARQL query (SELECT, ASK, CONSTRUCT, DESCRIBE) against the RDF store.'''
-        prepared_query = rdflib.plugins.sparql.prepareQuery(query)
+    def execute_sparql_query(self, query: SPARQLQuery) -> Union[List[Dict[str, Any]], bool, RDFGraph]:
+        prepared_query = prepareQuery(query, initNs=dict(self.graph.namespaces())) # Pass known namespaces
         q_result = self.graph.query(prepared_query)
 
-        if prepared_query.query_type == 'ASK':
-            return q_result.askAnswer
-        elif prepared_query.query_type == 'SELECT':
-            return [dict(row) for row in q_result] # Convert to list of dicts
-        elif prepared_query.query_type in ['CONSTRUCT', 'DESCRIBE']:
-            return q_result.graph # Returns an rdflib.Graph
-        return q_result # Should not happen for valid query types
+        if prepared_query.query_type == 'ASK': return q_result.askAnswer # type: ignore [attr-defined]
+        elif prepared_query.query_type == 'SELECT': return [dict(row.items()) for row in q_result]
+        elif prepared_query.query_type in ['CONSTRUCT', 'DESCRIBE']: return q_result.graph # type: ignore [attr-defined]
+        kce_logger.warning(f"Unknown or unhandled SPARQL query type: {prepared_query.query_type}")
+        return q_result # Fallback, should be one of the above for valid queries
 
     def execute_sparql_update(self, update_statement: SPARQLUpdate) -> None:
-        '''Executes a SPARQL UPDATE (INSERT, DELETE) against the RDF store.'''
-        prepared_update = rdflib.plugins.sparql.prepareUpdate(update_statement)
+        prepared_update = prepareUpdate(update_statement, initNs=dict(self.graph.namespaces()))
         self.graph.update(prepared_update)
-        # self.graph.commit() # For SQLiteStore, autocommit might be on, or commit explicitly
+        self.graph.commit()
 
     def trigger_reasoning(self) -> None:
-        '''Triggers OWL RL reasoning on the RDF store.'''
-        print("Starting OWL RL Reasoning...")
+        kce_logger.info("Starting OWL RL Reasoning with owlrl...")
         try:
-            owlrl.CombinedClosure.RDFS_OWLRL_Semantics(self.graph, axioms=True, daxioms=True).closure()
-            # owlrl.DeductiveClosure(owlrl.OWLRL_Semantics).expand(self.graph) # Alternative way
-            self.graph.commit() # Commit changes after reasoning
-            print("OWL RL Reasoning complete.")
+            closure = owlrl.DeductiveClosure(owlrl.OWLRL_Semantics, rdfs_closure=False, axiomatic_triples=True, datatype_axioms=True)
+            closure.expand(self.graph)
+            self.graph.commit()
+            kce_logger.info("OWL RL Reasoning complete.")
         except Exception as e:
-            print(f"Error during OWL RL reasoning: {e}")
-
+            kce_logger.error(f"Error during OWL RL reasoning: {e}", exc_info=True)
 
     def add_graph(self, graph_to_add: RDFGraph, context_uri: Optional[str] = None) -> None:
-        '''Adds an RDF graph to the store, optionally in a specific named context.'''
-        # If context_uri is provided, we might want to use a Dataset or a different graph identifier
-        # For a single graph setup with SQLiteStore, adding to the main graph.
+        target_graph = self.graph
         if context_uri:
-            # This needs a more complex setup for named graphs with rdflib-sqlite if not inherently supported by graph.addN
-            # For now, merging into the default graph.
-            # Consider using rdflib.Dataset if multiple named graphs are a strong requirement.
-            print(f"Warning: context_uri ('{context_uri}') provided but current setup merges into default graph.")
+            # SQLAlchemyStore uses the graph identifier to distinguish named graphs
+            target_graph = rdflib.Graph(store=self.store, identifier=rdflib.URIRef(context_uri))
+            kce_logger.debug(f"Adding {len(graph_to_add)} triples to named graph: {context_uri}")
+        else:
+            kce_logger.debug(f"Adding {len(graph_to_add)} triples to default graph.")
 
         for triple in graph_to_add:
-            self.graph.add(triple)
-        # self.graph.commit()
+            target_graph.add(triple)
+        target_graph.commit() # Commit the graph where triples were added
 
     def get_graph(self, context_uri: Optional[str] = None) -> RDFGraph:
-        '''Retrieves an RDF graph, optionally from a specific named context.'''
         if context_uri:
-            # This would require fetching a specific named graph.
-            # For now, returning the default graph.
-            print(f"Warning: context_uri ('{context_uri}') provided but current setup returns default graph.")
-            # named_graph = self.graph.get_context(context_uri) # This is for rdflib.Dataset
-            # return named_graph
-        return self.graph # Returns the main graph
+            return rdflib.Graph(store=self.store, identifier=rdflib.URIRef(context_uri))
+        return self.graph
 
     def store_human_readable_log(self, run_id: str, event_id: str, log_content: str) -> LogLocation:
-        '''Stores human-readable log content and returns its location/identifier.'''
-        import os
-        run_log_dir = os.path.join(self.log_dir, run_id)
-        os.makedirs(run_log_dir, exist_ok=True)
-        log_file_path = os.path.join(run_log_dir, f"{event_id.replace(':', '_')}.log")
+        run_log_dir = self.log_dir / run_id
+        run_log_dir.mkdir(parents=True, exist_ok=True)
+        safe_event_id = event_id.replace(':', '_').replace('/', '_').replace('\\', '_')
+        log_file_path = run_log_dir / f"{safe_event_id}.json"
         try:
-            with open(log_file_path, "w") as f:
-                f.write(log_content)
-            return log_file_path
+            with open(log_file_path, "w", encoding='utf-8') as f: f.write(log_content)
+            return str(log_file_path.resolve())
         except IOError as e:
-            print(f"Error writing human-readable log: {e}")
-            return "" # Return empty string or raise error
+            kce_logger.error(f"Error writing human-readable log to {log_file_path}: {e}", exc_info=True)
+            return ""
 
     def get_human_readable_log(self, log_location: LogLocation) -> Optional[str]:
-        '''Retrieves human-readable log content given its location/identifier.'''
+        log_file = Path(log_location)
         try:
-            import os
-            if os.path.exists(log_location):
-                with open(log_location, "r") as f:
-                    return f.read()
+            if log_file.exists() and log_file.is_file():
+                return log_file.read_text(encoding='utf-8')
             else:
-                print(f"Log file not found at: {log_location}")
+                kce_logger.warning(f"Human-readable log file not found at: {log_location}")
                 return None
         except IOError as e:
-            print(f"Error reading human-readable log {log_location}: {e}")
+            kce_logger.error(f"Error reading human-readable log {log_location}: {e}", exc_info=True)
             return None
 
     def close(self):
-        '''Closes the graph store connection.'''
-        self.graph.close()
+        if self.graph is not None: self.graph.close()
+        # SQLAlchemyStore might require explicit disposal of engine if created by us
+        # but if dburi is used, it often manages its own engine lifecycle to some extent.
+        # self.store.destroy() # Or similar if available and needed
+        kce_logger.info(f"RdfStoreManager for {self.db_uri} operations concluded (graph closed).")
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-if __name__ == '__main__':
-    # Example Usage (for testing purposes)
-    # Create a dummy ontology file
-    with open("dummy_ontology.ttl", "w") as f:
-        f.write("<urn:ex:subject> <urn:ex:predicate> <urn:ex:object> .")
-
-    # Test with a persistent DB
-    manager = RdfStoreManager(db_path="test_kce_db.sqlite", ontology_files=["dummy_ontology.ttl"])
-
-    print(f"Default graph has {len(manager.get_graph())} triples after loading.")
-
-    # Test add_graph
-    g_add = rdflib.Graph()
-    g_add.add((rdflib.URIRef("urn:test:entity1"), rdflib.RDF.type, rdflib.RDFS.Class))
-    manager.add_graph(g_add)
-    print(f"Graph has {len(manager.get_graph())} triples after adding a graph.")
-
-    # Test SPARQL Update
-    update_q = "INSERT DATA { <urn:test:entity2> a <urn:ex:MyType> . }"
-    manager.execute_sparql_update(update_q)
-    print(f"Graph has {len(manager.get_graph())} triples after SPARQL update.")
-
-    # Test SPARQL Query
-    select_q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 5"
-    results = manager.execute_sparql_query(select_q)
-    print("Query results (first 5):", results)
-
-    ask_q = "ASK { <urn:test:entity1> a <http://www.w3.org/2000/01/rdf-schema#Class> . }"
-    ask_result = manager.execute_sparql_query(ask_q)
-    print("ASK result:", ask_result)
-
-    # Test Reasoning (simple RDFS example)
-    manager.execute_sparql_update("INSERT DATA { <urn:test:sub> rdfs:subClassOf <urn:test:super>. <urn:test:ind> a <urn:test:sub>. }")
-    print(f"Graph has {len(manager.get_graph())} triples before reasoning on subclass.")
-    manager.trigger_reasoning()
-    print(f"Graph has {len(manager.get_graph())} triples after reasoning.")
-
-    reasoning_q = "SELECT ?ind WHERE { ?ind a <urn:test:super> . }"
-    reasoning_results = manager.execute_sparql_query(reasoning_q)
-    print("Individuals of type urn:test:super (after reasoning):", reasoning_results)
-
-    # Test Human Readable Logs
-    run1_event1_loc = manager.store_human_readable_log("run001", "event001_init", "System initialized with params X.")
-    print(f"Stored log for run001/event001 at: {run1_event1_loc}")
-    retrieved_log = manager.get_human_readable_log(run1_event1_loc)
-    print(f"Retrieved log: {retrieved_log}")
-
-    run1_event2_loc = manager.store_human_readable_log("run001", "event002_node_A_output", "{'output_value': 123}")
-    print(f"Stored log for run001/event002 at: {run1_event2_loc}")
-
-
-    # Clean up dummy files
-    import os
-    os.remove("dummy_ontology.ttl")
-    # os.remove("test_kce_db.sqlite") # Keep it to see persistence or remove
-
-    manager.close()
-    print("Store manager operations test complete.")
+    def __enter__(self): return self
+    def __exit__(self, exc_type, exc_val, exc_tb): self.close()

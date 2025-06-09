@@ -1,0 +1,228 @@
+@prefix : <http://kce.com/ontology/core#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+:ontology a owl:Ontology ;
+    rdfs:label "Knowledge-CAD-Engine Core Ontology" ;
+    rdfs:comment "Defines the core concepts for the KCE framework (v0.3 - Refactored Architecture)." ;
+    owl:versionInfo "0.3.0" .
+
+# --- Base Classes ---
+:Entity a owl:Class ;
+    rdfs:label "KCE Entity" ;
+    rdfs:comment "A base class for most entities defined within the KCE framework." .
+
+# --- Node Definitions ---
+:Node a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Node" ;
+    rdfs:comment "An abstract base class for an executable unit. It can be atomic or composite." .
+
+:AtomicNode a owl:Class ;
+    rdfs:subClassOf :Node ;
+    rdfs:label "Atomic Node" ;
+    rdfs:comment "Represents a single, indivisible executable unit." .
+
+# --- Parameter Definitions ---
+:Parameter a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Parameter" ;
+    rdfs:comment "Abstract base class for input or output parameters of a Node." .
+
+:InputParameter a owl:Class ;
+    rdfs:subClassOf :Parameter ;
+    rdfs:label "Input Parameter" .
+
+:OutputParameter a owl:Class ;
+    rdfs:subClassOf :Parameter ;
+    rdfs:label "Output Parameter" .
+
+# --- Implementation Detail ---
+:ImplementationDetail a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Implementation Detail" ;
+    rdfs:comment "Describes how an AtomicNode should be executed." .
+
+:InvocationTypeConcept a owl:Class ;
+    rdfs:label "Invocation Type Concept";
+    rdfs:comment "A type of invocation, e.g., Python script, API call." .
+
+:PythonScriptInvocation rdf:type :InvocationTypeConcept ; # Changed from ...Type to just ...Invocation
+    rdfs:label "Python Script Invocation" .
+
+# --- Rule Definition ---
+:Rule a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Rule" ;
+    rdfs:comment "A declarative rule with an antecedent (condition) and a consequent (action)." .
+
+# --- Goal and Target Description ---
+:Goal a owl:Class;
+    rdfs:subClassOf :Entity;
+    rdfs:label "Goal" .
+
+:TargetDescription a owl:Class;
+    rdfs:subClassOf :Entity;
+    rdfs:label "Target Description";
+    rdfs:comment "Describes the target state or conditions for the Planner to achieve." .
+
+# --- Execution Run and State ---
+:ExecutionRun a owl:Class ;
+    rdfs:subClassOf :Entity , prov:Activity ;
+    rdfs:label "Execution Run" ;
+    rdfs:comment "Records metadata about a single execution instance triggered by a Planner.solve() call." .
+
+:ExecutionStateNode a owl:Class ;
+    rdfs:subClassOf :Entity ;
+    rdfs:label "Execution State Node" ;
+    rdfs:comment "Represents a specific state or event snapshot during an ExecutionRun." .
+
+:ExecutionStatusConcept a owl:Class;
+    rdfs:label "Execution Status Concept";
+    rdfs:comment "A type of execution status." .
+
+:Started rdf:type :ExecutionStatusConcept; rdfs:label "Started" .
+:Succeeded rdf:type :ExecutionStatusConcept; rdfs:label "Succeeded" .
+:Failed rdf:type :ExecutionStatusConcept; rdfs:label "Failed" .
+:Completed rdf:type :ExecutionStatusConcept; rdfs:label "Completed" .
+:Applied rdf:type :ExecutionStatusConcept; rdfs:label "Applied" .
+
+:EventTypeConcept a owl:Class;
+    rdfs:label "Event Type Concept" .
+:NodeExecutionStart rdf:type :EventTypeConcept; rdfs:label "NodeExecutionStart" .
+:NodeExecutionEnd rdf:type :EventTypeConcept; rdfs:label "NodeExecutionEnd" .
+:RuleEvaluationStart rdf:type :EventTypeConcept; rdfs:label "RuleEvaluationStart" .
+:RuleAntecedentMet rdf:type :EventTypeConcept; rdfs:label "RuleAntecedentMet" .
+:RuleAntecedentNotMet rdf:type :EventTypeConcept; rdfs:label "RuleAntecedentNotMet" .
+:RuleConsequentApplied rdf:type :EventTypeConcept; rdfs:label "RuleConsequentApplied" .
+:RuleEffectExecution rdf:type :EventTypeConcept; rdfs:label "RuleEffectExecution" .
+:RuleApplication rdf:type :EventTypeConcept; rdfs:label "RuleApplication" .
+:PlanSegmentStart rdf:type :EventTypeConcept; rdfs:label "PlanSegmentStart" .
+:PlanSegmentEnd rdf:type :EventTypeConcept; rdfs:label "PlanSegmentEnd" .
+
+# --- Properties for Nodes ---
+:hasInputParameter a owl:ObjectProperty ;
+    rdfs:label "has input parameter" ;
+    rdfs:domain :Node ;
+    rdfs:range :InputParameter .
+
+:hasOutputParameter a owl:ObjectProperty ;
+    rdfs:label "has output parameter" ;
+    rdfs:domain :Node ;
+    rdfs:range :OutputParameter .
+
+:hasImplementationDetail a owl:ObjectProperty ;
+    rdfs:label "has implementation detail" ;
+    rdfs:domain :AtomicNode ;
+    rdfs:range :ImplementationDetail .
+
+:hasPrecondition a owl:DatatypeProperty ;
+    rdfs:label "has precondition" ;
+    rdfs:comment "A SPARQL ASK query string defining the precondition." ;
+    rdfs:domain :Node ;
+    rdfs:range xsd:string . # Or a more specific :SparqlQuery literal type
+
+:hasEffect a owl:DatatypeProperty ;
+    rdfs:label "has effect" ;
+    rdfs:comment "A description of the node's effects, potentially a SPARQL UPDATE template or structured RDF." ;
+    rdfs:domain :Node ;
+    rdfs:range xsd:string . # Or a :SparqlUpdateTemplate / structured effect class
+
+# --- Properties for Parameters ---
+:mapsToRdfProperty a owl:ObjectProperty ;
+    rdfs:label "maps to RDF property" ;
+    rdfs:domain :Parameter ;
+    rdfs:range rdf:Property .
+
+:hasDatatype a owl:ObjectProperty ;
+    rdfs:label "has datatype" ;
+    rdfs:domain :Parameter ;
+    rdfs:range rdfs:Datatype .
+
+# --- Properties for ImplementationDetail ---
+:invocationType a owl:ObjectProperty ;
+    rdfs:label "invocation type" ;
+    rdfs:comment "Specifies the type of invocation (e.g., Python script, REST API)." ;
+    rdfs:domain :ImplementationDetail ;
+    rdfs:range :InvocationTypeConcept .
+
+:scriptPath a owl:DatatypeProperty ;
+    rdfs:label "script path" ;
+    rdfs:domain :ImplementationDetail ;
+    rdfs:range xsd:string .
+
+# --- Properties for Rules ---
+:hasAntecedent a owl:DatatypeProperty ;
+    rdfs:label "has antecedent" ;
+    rdfs:comment "A SPARQL query string (typically ASK or WHERE part) for the rule's condition." ;
+    rdfs:domain :Rule ;
+    rdfs:range xsd:string .
+
+:hasConsequent a owl:DatatypeProperty ;
+    rdfs:label "has consequent" ;
+    rdfs:comment "A SPARQL query string (typically INSERT, DELETE, or CONSTRUCT) for the rule's action." ;
+    rdfs:domain :Rule ;
+    rdfs:range xsd:string .
+
+:hasPriority a owl:DatatypeProperty ;
+    rdfs:label "has priority" ;
+    rdfs:domain :Rule ;
+    rdfs:range xsd:integer .
+
+# --- Properties for TargetDescription ---
+:hasSparqlAskTarget a owl:DatatypeProperty;
+    rdfs:label "has SPARQL ASK target";
+    rdfs:domain :TargetDescription;
+    rdfs:range xsd:string .
+
+# --- Properties for ExecutionStateNode ---
+:belongsToRun a owl:ObjectProperty ;
+    rdfs:label "belongs to run" ;
+    rdfs:domain :ExecutionStateNode ;
+    rdfs:range :ExecutionRun .
+
+:timestamp a owl:DatatypeProperty;
+    rdfs:label "timestamp" ;
+    rdfs:domain :ExecutionStateNode;
+    rdfs:range xsd:dateTime .
+
+:triggeredByOperation a owl:ObjectProperty;
+    rdfs:label "triggered by operation";
+    rdfs:comment "The Node or Rule that caused this state/event." ;
+    rdfs:domain :ExecutionStateNode;
+    rdfs:range [ owl:unionOf ( :Node :Rule ) ] .
+
+:status a owl:ObjectProperty;
+    rdfs:label "status";
+    rdfs:domain :ExecutionStateNode;
+    rdfs:range :ExecutionStatusConcept .
+
+:humanReadableLogLocation a owl:DatatypeProperty;
+    rdfs:label "human readable log location" ;
+    rdfs:domain :ExecutionStateNode;
+    rdfs:range xsd:string .
+
+:eventType a owl:ObjectProperty;
+    rdfs:label "event type";
+    rdfs:domain :ExecutionStateNode;
+    rdfs:range :EventTypeConcept .
+
+# Datatype for SPARQL Queries (used in DefinitionLoader)
+:SparqlQuery a rdfs:Datatype; rdfs:label "SPARQL Query Literal".
+:SparqlUpdateTemplate a rdfs:Datatype; rdfs:label "SPARQL Update Template Literal".
+
+# --- CapabilityTemplate related (placeholders based on FSD) ---
+:CapabilityTemplate a owl:Class ; rdfs:label "Capability Template" ; rdfs:subClassOf :Entity .
+:InputInterface a owl:Class ; rdfs:label "Input Interface" ; rdfs:subClassOf :Entity .
+:OutputInterface a owl:Class ; rdfs:label "Output Interface" ; rdfs:subClassOf :Entity .
+:InterfaceParameter a owl:Class ; rdfs:label "Interface Parameter"; rdfs:subClassOf :Parameter .
+:hasInputInterface a owl:ObjectProperty ; rdfs:domain :CapabilityTemplate ; rdfs:range :InputInterface .
+:hasOutputInterface a owl:ObjectProperty ; rdfs:domain :CapabilityTemplate ; rdfs:range :OutputInterface .
+:hasAbstractType a owl:DatatypeProperty ; rdfs:domain :InterfaceParameter ; rdfs:range xsd:string .
+:implementsCapability a owl:ObjectProperty ; rdfs:domain :Node ; rdfs:range :CapabilityTemplate .
+
+# End of KCE Core Ontology (Refactored)
