@@ -1,0 +1,18 @@
+# KCE Core Dependencies
+rdflib>=7.0.0
+# rdflib-sqlalchemy is in maintenance mode; pinning to a known version.
+# Last release 0.5.4 (Mar 2023) likely targets SQLAlchemy 1.4.x or early 2.x.
+# Let's try with SQLAlchemy 1.4.x first for wider compatibility.
+rdflib-sqlalchemy==0.5.4
+SQLAlchemy>=1.4.0,<2.0
+
+pyyaml>=6.0
+click>=8.0
+owlrl>=6.0.2
+
+# Development and Testing Dependencies
+pytest>=8.0.0
+
+# Optional, if specific database drivers are needed beyond SQLite (which is built-in)
+# psycopg2-binary # For PostgreSQL
+# mysqlclient     # For MySQL/MariaDB
