@@ -124,9 +124,16 @@ def graph_to_json_ld_string(graph: rdflib.Graph, context: Optional[Dict] = None,
         for s, p, o in graph:
             s_val, p_val = str(s), str(p)
             o_val_dict: Dict[str, Any] = {}
-            if isinstance(o, rdflib.URIRef): o_val_dict = {"@id": str(o)}
-            elif isinstance(o, rdflib.Literal): o_val_dict = {"@value": o.toPython()}; if o.language: o_val_dict["@language"] = o.language; if o.datatype: o_val_dict["@type"] = str(o.datatype)
-            else: o_val_dict = {"@id": str(o)} # BNode as @id (or str(o) directly)
+            if isinstance(o, rdflib.URIRef):
+                o_val_dict = {"@id": str(o)}
+            elif isinstance(o, rdflib.Literal):
+                o_val_dict = {"@value": o.toPython()}
+                if o.language:
+                    o_val_dict["@language"] = o.language
+                if o.datatype:
+                    o_val_dict["@type"] = str(o.datatype)
+            else: # Handles BNode or other types
+                o_val_dict = {"@id": str(o)} # BNode as @id (or str(o) directly)
             found = False
             for item in output_list:
                 if item["@id"] == s_val: item.setdefault(p_val, []).append(o_val_dict); found = True; break

@@ -1,0 +1,13 @@
+{
+  "event_id": "test_run_001_SimpleRule_001_Succeeded_20250610042455711557",
+  "run_id": "test_run_001",
+  "timestamp": "2025-06-10T04:24:55.711585",
+  "event_type": "RuleAntecedentMet",
+  "operation_uri": "http://example.com/ns#SimpleRule_001",
+  "status": "Succeeded",
+  "inputs": {
+    "antecedent_query": "ASK { ex:dataInstance ex:status \"pending\" . }"
+  },
+  "outputs": null,
+  "message": "Antecedent is true."
+}

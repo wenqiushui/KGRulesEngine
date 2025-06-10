@@ -1,0 +1,15 @@
+{
+  "event_id": "test_run_001_SimpleRule_001_Succeeded_20250610041943256943",
+  "run_id": "test_run_001",
+  "timestamp": "2025-06-10T04:19:43.256971",
+  "event_type": "RuleConsequentApplied",
+  "operation_uri": "http://example.com/ns#SimpleRule_001",
+  "status": "Succeeded",
+  "inputs": {
+    "consequent_query": "\n          PREFIX ex: <http://example.com/ns#>\n          DELETE DATA { ex:dataInstance ex:status \"pending\" . };\n          INSERT DATA { ex:dataInstance ex:status \"processed\" . }\n        "
+  },
+  "outputs": {
+    "knowledge_updated": true
+  },
+  "message": "Rule <http://example.com/ns#SimpleRule_001> consequent applied."
+}

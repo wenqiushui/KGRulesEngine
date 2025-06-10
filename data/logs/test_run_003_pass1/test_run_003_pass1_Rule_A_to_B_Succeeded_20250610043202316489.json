@@ -1,0 +1,13 @@
+{
+  "event_id": "test_run_003_pass1_Rule_A_to_B_Succeeded_20250610043202316489",
+  "run_id": "test_run_003_pass1",
+  "timestamp": "2025-06-10T04:32:02.316517",
+  "event_type": "RuleAntecedentMet",
+  "operation_uri": "http://example.com/ns#Rule_A_to_B",
+  "status": "Succeeded",
+  "inputs": {
+    "antecedent_query": "ASK { ex:multiTest ex:status 'A' . }"
+  },
+  "outputs": null,
+  "message": "Antecedent is true."
+}

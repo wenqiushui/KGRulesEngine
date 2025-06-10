@@ -1,0 +1,13 @@
+{
+  "event_id": "test_run_002_SimpleRule_001_Completed_20250610042109332866",
+  "run_id": "test_run_002",
+  "timestamp": "2025-06-10T04:21:09.332898",
+  "event_type": "RuleAntecedentNotMet",
+  "operation_uri": "http://example.com/ns#SimpleRule_001",
+  "status": "Completed",
+  "inputs": {
+    "antecedent_query": "ASK { ex:dataInstance ex:status \"pending\" . }"
+  },
+  "outputs": null,
+  "message": "Antecedent is false."
+}

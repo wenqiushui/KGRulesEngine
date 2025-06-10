@@ -4,6 +4,7 @@ import os
 from pathlib import Path # Added Path
 from rdflib import Graph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS, XSD
+from typing import Any, Dict # Added Any and Dict for type hinting
 import uuid # For fallback URI generation
 import logging # For kce_logger
 

@@ -1,0 +1,13 @@
+{
+  "event_id": "test_run_004_Rule_Y_Low_Pri_Started_20250610042241321585",
+  "run_id": "test_run_004",
+  "timestamp": "2025-06-10T04:22:41.321607",
+  "event_type": "RuleEvaluationStart",
+  "operation_uri": "http://example.com/ns#Rule_Y_Low_Pri",
+  "status": "Started",
+  "inputs": {
+    "antecedent_query": "ASK { ex:priTest ex:status 'start' . }"
+  },
+  "outputs": null,
+  "message": null
+}
