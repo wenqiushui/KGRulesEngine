@@ -77,15 +77,29 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                         g.add((param_uri, KCE.isRequired, Literal(bool(p_data["isRequired"]), datatype=XSD.boolean)))
                     g.add((node_uri, kce_predicate, param_uri))
 
-        if "implementation" in data:
-            impl_data = data["implementation"]
-            impl_uri_str = f"{node_uri_str}/implementation"
+        # Use "invocation" from YAML, mapping to "implementation" conceptually
+        if "invocation" in data:
+            impl_data = data["invocation"] # Changed from "implementation"
+            impl_uri_str = f"{node_uri_str}/implementation" # Keep internal model consistent
             impl_uri = self._prefix_uri(impl_uri_str)
             g.add((impl_uri, RDF.type, KCE.ImplementationDetail))
+
             impl_type_str = impl_data.get("type")
-            if impl_type_str: g.add((impl_uri, KCE.invocationType, self._prefix_uri(impl_type_str)))
-            if "scriptPath" in impl_data:
-                original_script_path = impl_data["scriptPath"]
+            if impl_type_str:
+                # Map common strings to KCE ontology terms
+                if impl_type_str == "PythonScript":
+                    invocation_type_uri = KCE.PythonScriptInvocation
+                elif impl_type_str == "SparqlUpdate": # Example for future
+                    invocation_type_uri = KCE.SparqlUpdateInvocation
+                # Add other mappings as necessary
+                else:
+                    # Fallback to _prefix_uri if it's a prefixed URI or full URI
+                    invocation_type_uri = self._prefix_uri(impl_type_str)
+                g.add((impl_uri, KCE.invocationType, invocation_type_uri))
+
+            # YAML uses 'script_path', Python dict key from yaml.load is 'script_path'
+            original_script_path = impl_data.get("script_path")
+            if original_script_path:
                 yaml_file_path_obj = Path(file_path_str)
                 yaml_dir = yaml_file_path_obj.parent
                 resolved_script_path = (yaml_dir / original_script_path).resolve()
@@ -130,23 +144,64 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                     try:
                         with open(abs_file_path_str, 'r', encoding='utf-8') as f:
                             yaml_documents = list(yaml.safe_load_all(f))
-                        for i, doc_data in enumerate(yaml_documents):
-                            if not doc_data or not isinstance(doc_data, dict): continue
-                            kce_logger.debug(f"Processing document {i+1} in {abs_file_path_str} (keys: {list(doc_data.keys())})")
-                            doc_kind = doc_data.get("kind")
-                            rdf_graph = None
-                            if doc_kind == "AtomicNode":
-                                rdf_graph = self._parse_node_definition(doc_data, abs_file_path_str)
-                            elif doc_kind == "Rule":
-                                rdf_graph = self._parse_rule_definition(doc_data, abs_file_path_str)
-                            elif doc_kind == "CapabilityTemplate":
-                                rdf_graph = self._parse_capability_template_definition(doc_data, abs_file_path_str)
-                            else:
-                                errors.append({"file": abs_file_path_str, "document_index": i, "error": f"Unknown 'kind': {doc_kind}"})
+                        for i, doc_data_or_collection in enumerate(yaml_documents):
+                            if not doc_data_or_collection or not isinstance(doc_data_or_collection, dict):
                                 continue
-                            if rdf_graph and len(rdf_graph) > 0:
-                                self.kl.add_graph(rdf_graph)
-                                loaded_docs_count += 1
+
+                            definitions_to_process = []
+                            found_collection = False
+                            # Check for common top-level collection keys like 'nodes', 'rules', etc.
+                            for key in ["nodes", "rules", "workflows", "definitions"]:
+                                if key in doc_data_or_collection and isinstance(doc_data_or_collection[key], list):
+                                    definitions_to_process.extend(doc_data_or_collection[key])
+                                    found_collection = True
+                                    kce_logger.debug(f"Found collection key '{key}' in document {i+1} from {abs_file_path_str}")
+                                    break
+
+                            if not found_collection:
+                                # Assume the document itself is a single definition
+                                definitions_to_process.append(doc_data_or_collection)
+
+                            for j, def_data in enumerate(definitions_to_process):
+                                if not def_data or not isinstance(def_data, dict):
+                                    kce_logger.warning(f"Skipping item {j} in document {i} from file {abs_file_path_str} as it's not a dictionary.")
+                                    continue
+
+                                kce_logger.debug(f"Processing definition item {j} (doc {i+1}) from {abs_file_path_str} (keys: {list(def_data.keys())})")
+
+                                # Map 'id' to 'uri' and 'label' to 'name' if 'uri'/'name' are not present
+                                if "id" in def_data and "uri" not in def_data:
+                                     def_data["uri"] = def_data["id"]
+                                if "label" in def_data and "name" not in def_data:
+                                     def_data["name"] = def_data["label"]
+
+                                doc_kind = def_data.get("kind")
+                                # Fallback to 'type' if 'kind' is not present, for compatibility with some YAML structures
+                                if not doc_kind:
+                                    doc_kind = def_data.get("type")
+
+                                rdf_graph = None
+                                if doc_kind == "AtomicNode":
+                                    rdf_graph = self._parse_node_definition(def_data, abs_file_path_str)
+                                elif doc_kind == "Rule":
+                                    rdf_graph = self._parse_rule_definition(def_data, abs_file_path_str)
+                                elif doc_kind == "CapabilityTemplate":
+                                    rdf_graph = self._parse_capability_template_definition(def_data, abs_file_path_str)
+                                # Add elif for "Workflow" kind here if _parse_workflow_definition is implemented
+                                # elif doc_kind == "Workflow":
+                                #     rdf_graph = self._parse_workflow_definition(def_data, abs_file_path_str)
+                                else:
+                                    errors.append({"file": abs_file_path_str, "document_index": i, "item_index":j, "error": f"Unknown or unsupported 'kind'/'type': {doc_kind} for item: {str(def_data)[:100]}"})
+                                    continue
+
+                                if rdf_graph and len(rdf_graph) > 0:
+                                    self.kl.add_graph(rdf_graph)
+                                    loaded_docs_count += 1
+                                elif rdf_graph is None: # Parsing method itself had an issue
+                                     errors.append({"file": abs_file_path_str, "document_index": i, "item_index":j, "error": f"Parsing for kind '{doc_kind}' returned None for item: {str(def_data)[:100]}"})
+                                # If rdf_graph is an empty graph, it means parsing happened but produced no triples (e.g. CapabilityTemplate)
+                                # No explicit error here, but count doesn't increment.
+
                     except yaml.YAMLError as ye:
                         errors.append({"file": abs_file_path_str, "error": f"YAML parsing error: {ye}"})
                     except Exception as e:

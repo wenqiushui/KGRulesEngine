@@ -4,22 +4,24 @@ import click
 import logging
 from pathlib import Path
 import sys # For sys.exit on error
+from typing import Optional, List, Dict, Any # Added for type hints
 
 # Import core KCE components made available via kce_core/__init__.py
 from kce_core import (
-    StoreManager,
+    RdfStoreManager as StoreManager,
     DefinitionLoader,
-    WorkflowExecutor,
-    NodeExecutor, # Needed by WorkflowExecutor
-    RuleEvaluator,  # Needed by WorkflowExecutor
-    ProvenanceLogger,
-    sparql_queries,
-    kce_logger, # Use the logger from utils, re-exported
+    PlanExecutor as WorkflowExecutor,      # Correct: Alias PlanExecutor
+    NodeExecutor,
+    RuleEngine as RuleEvaluator,          # Correct: Alias RuleEngine
+    RuntimeStateLogger as ProvenanceLogger, # Correct: Alias RuntimeStateLogger
+    # sparql_queries, # This was incorrect, imported below directly
+    kce_logger,
     KCEError, DefinitionError, RDFStoreError, ExecutionError,
     get_kce_version,
     KCE, EX # Example namespaces for parameter keys
 )
-from kce_core.common.utils import load_json_file, load_json_string # Direct import for clarity
+from kce_core.common.utils import load_json_file # load_json_string is not defined in utils.py
+from kce_core.knowledge_layer.rdf_store import sparql_queries # Corrected import for sparql_queries
 
 # --- CLI Configuration ---
 DEFAULT_DB_PATH = "kce_store.sqlite"

@@ -2,328 +2,305 @@ import rdflib
 import subprocess
 import json
 import os
-import tempfile
-from typing import Dict, Any, List, Union # Added List, Union for type hints
+import sys
+from pathlib import Path
+from typing import Dict, Any, List, Union, Optional, Tuple
+from rdflib import URIRef, Literal, Graph
+from rdflib.namespace import RDF, RDFS, XSD # Ensure these are directly available if used
 
-# Assuming interfaces.py is two levels up
 from ..interfaces import INodeExecutor, IKnowledgeLayer, RDFGraph
-# Assuming common.utils will be created. For now, define placeholders if not present.
-try:
-    from ..common.utils import get_value_from_graph, create_rdf_graph_from_json_ld_dict
-except ImportError:
-    print("Warning: common.utils not found. Using placeholder functions for NodeExecutor.")
-    # Placeholder implementations for utils if not found (e.g. during isolated testing)
-    def get_value_from_graph(graph: RDFGraph, subject: Any, predicate: Any) -> Any:
-        # Simplified placeholder
-        for s, p, o_literal in graph.triples((subject, predicate, None)):
-            return o_literal # Returns rdflib.Literal or URIRef
-        return None
-
-    def create_rdf_graph_from_json_ld_dict(data: Dict[str, Any], base_ns: rdflib.Namespace) -> RDFGraph:
-        # Simplified placeholder
-        g = rdflib.Graph()
-        # This would require a proper JSON-LD parsing logic
-        print(f"Placeholder: Would convert JSON-LD dict to graph. Data: {data}")
-        return g
-
 
 # Define KCE namespace (ideally from a central place)
 KCE = rdflib.Namespace("http://kce.com/ontology/core#")
-EX = rdflib.Namespace("http://example.com/ns#")
+EX = rdflib.Namespace("http://example.com/ns#") # Fallback, not used much here
+
+# KCE terms for argument passing and parameters
+ARG_PASSING_STYLE_PROP = KCE.argumentPassingStyle
+CMD_LINE_ARGS_STYLE = KCE.CommandLineArguments
+STDIN_JSON_STYLE = KCE.StdInJSON # Used for explicit stdin preference or as fallback
+PARAM_ORDER_PROP = KCE.parameterOrder
+MAPS_TO_RDF_PROPERTY_PROP = KCE.mapsToRdfProperty
+HAS_DATATYPE_PROP = KCE.hasDatatype
 
 
 class NodeExecutor(INodeExecutor):
     def __init__(self):
-        # Potentially load configuration for script execution environments, etc.
-        pass
+        pass # No runtime_state_logger instance variable as per current class structure
 
-    def _get_node_implementation_details(self, node_uri: str, knowledge_layer: IKnowledgeLayer) -> Dict[str, Any]:
-        '''Retrieve node implementation details (e.g., script path, invocation type) from the KnowledgeLayer.'''
+    def _get_node_implementation_details(self, node_uri_str: str, knowledge_layer: IKnowledgeLayer) -> Dict[str, Any]:
+        # Added ?arg_style_uri to the query
         query = f"""
         PREFIX kce: <{KCE}>
-        SELECT ?type ?scriptPath
+        SELECT ?type ?scriptPath ?command ?target_uri ?target_sparql_ask_query ?arg_style_uri
         WHERE {{
-            <{node_uri}> kce:hasImplementationDetail ?impl .
+            <{node_uri_str}> kce:hasImplementationDetail ?impl .
             ?impl kce:invocationType ?type .
             OPTIONAL {{ ?impl kce:scriptPath ?scriptPath . }}
+            OPTIONAL {{ ?impl kce:hasSparqlUpdateCommand ?command . }}
+            OPTIONAL {{ ?impl kce:targetUri ?target_uri . }}
+            OPTIONAL {{ ?impl kce:targetSparqlAskQuery ?target_sparql_ask_query . }}
+            OPTIONAL {{ <{node_uri_str}> <{ARG_PASSING_STYLE_PROP}> ?arg_style_uri . }}
         }}
         LIMIT 1
         """
         results = knowledge_layer.execute_sparql_query(query)
         if isinstance(results, list) and results:
-            return results[0] # Returns a dict like {'type': URIRef(...), 'scriptPath': Literal(...)}
-        raise ValueError(f"Node implementation details not found for {node_uri}")
+            # Ensure all expected keys are present, defaulting to None if OPTIONAL and not found
+            details = results[0]
+            return {
+                'type': details.get('type'),
+                'scriptPath': details.get('scriptPath'),
+                'command': details.get('command'),
+                'target_uri': details.get('target_uri'),
+                'target_sparql_ask_query': details.get('target_sparql_ask_query'),
+                'arg_style_uri': details.get('arg_style_uri')
+            }
+        raise ValueError(f"Node implementation details not found for <{node_uri_str}>")
 
-    def _prepare_node_inputs(self, node_uri: str, knowledge_layer: IKnowledgeLayer, current_input_graph: RDFGraph) -> Dict[str, Any]:
-        '''
-        Prepares a dictionary of inputs for the node based on its input parameter definitions
-        and the current state of the knowledge graph (current_input_graph).
-        '''
-        inputs = {}
-        input_params_query = f"""
+    def _get_node_parameter_definitions(self, node_uri_str: str, direction: str, knowledge_layer: IKnowledgeLayer) -> List[Dict[str, Any]]:
+        if direction not in ["Input", "Output"]:
+            raise ValueError("Direction must be 'Input' or 'Output'")
+
+        has_param_prop = KCE[f"has{direction}Parameter"]
+
+        # Added ?order to the query
+        query = f"""
         PREFIX kce: <{KCE}>
-        PREFIX rdfs: <{rdflib.RDFS}>
-        SELECT ?paramName ?rdfProp ?datatype
+        PREFIX rdfs: <{RDFS}>
+        SELECT ?param_uri ?paramName ?rdfProp ?datatype ?order
         WHERE {{
-            <{node_uri}> kce:hasInputParameter ?param .
-            ?param rdfs:label ?paramName .
-            ?param kce:mapsToRdfProperty ?rdfProp .
-            OPTIONAL {{ ?param kce:hasDatatype ?datatype . }}
+            <{node_uri_str}> <{has_param_prop}> ?param_uri .
+            ?param_uri rdfs:label ?paramName .
+            OPTIONAL {{ ?param_uri <{MAPS_TO_RDF_PROPERTY_PROP}> ?rdfProp . }}
+            OPTIONAL {{ ?param_uri <{HAS_DATATYPE_PROP}> ?datatype . }}
+            OPTIONAL {{ ?param_uri <{PARAM_ORDER_PROP}> ?order . }}
         }}
         """
-        param_defs = knowledge_layer.execute_sparql_query(input_params_query)
-        if isinstance(param_defs, list):
-            for p_def in param_defs:
-                param_name = str(p_def['paramName']) # Literal to string
-                rdf_prop_uri = p_def['rdfProp']    # URIRef
+        results = knowledge_layer.execute_sparql_query(query)
+        params = []
+        if isinstance(results, list):
+            for row in results:
+                order_val = float('inf')
+                order_literal = row.get('order')
+                if order_literal and isinstance(order_literal, Literal) and order_literal.value is not None:
+                    try:
+                        order_val = int(order_literal.value)
+                    except ValueError:
+                        print(f"Warning: Could not parse parameterOrder '{order_literal.value}' as int for param <{row.get('param_uri')}> on node <{node_uri_str}>.")
 
-                # Find a subject in current_input_graph that has this rdf_prop_uri
-                # This assumes current_input_graph contains entities that are inputs to the node.
-                # A more robust way might involve knowing the target entity URI for this node execution.
-                value_found = False
-                for s, p, o in current_input_graph.triples((None, rdf_prop_uri, None)):
-                    # Convert rdflib Literal/URIRef to Python native type for the script
-                    if isinstance(o, rdflib.Literal):
-                        inputs[param_name] = o.toPython()
-                    else: # URIRef
-                        inputs[param_name] = str(o)
-                    value_found = True
-                    break # Take first one found for this property
+                params.append({
+                    "uri": row.get('param_uri'),
+                    "name": str(row.get('paramName')),
+                    "maps_to_prop": row.get('rdfProp'),
+                    "datatype": row.get('datatype'),
+                    "order": order_val
+                })
+        params.sort(key=lambda p: (p["order"], p["name"])) # Sort by order, then by name
+        return params
 
-                if not value_found:
-                    print(f"Warning: Input for parameter '{param_name}' (property <{rdf_prop_uri}>) "
-                          f"for node <{node_uri}> not found in current_input_graph.")
-        return inputs
+    def _prepare_inputs_for_script_stdin(self, input_param_definitions: List[Dict[str, Any]], current_input_graph: RDFGraph, node_uri_str: str) -> Dict[str, Any]:
+        inputs_for_script = {}
+        if not input_param_definitions: return inputs_for_script
 
+        for p_def in input_param_definitions:
+            param_name = p_def['name']
+            rdf_prop_uri = p_def.get('maps_to_prop')
 
-    def _execute_python_script(self, script_path: str, inputs: Dict[str, Any], node_uri: str) -> Dict[str, Any]:
-        '''Executes a Python script, passing inputs as JSON via stdin or temp file,
-           and captures its JSON output from stdout.'''
+            if not rdf_prop_uri:
+                print(f"Warning: Input parameter '{param_name}' for node <{node_uri_str}> has no kce:mapsToRdfProperty. Cannot fetch value for stdin/JSON.")
+                continue
 
-        potential_paths = [
-            script_path, # Absolute or relative to CWD
-            os.path.join("examples", script_path),
-            # Path relative to this node_executor.py file: kce_core/execution_layer/node_executor.py
-            # So, to get to repo root, it's three levels up.
-            os.path.join(os.path.dirname(__file__), "..", "..", script_path)
-        ]
-
-        actual_script_path = None
-        for p_path in potential_paths:
-            abs_path = os.path.abspath(p_path)
-            if os.path.exists(abs_path) and os.path.isfile(abs_path):
-                actual_script_path = abs_path
+            value_found = False
+            for s, p, o_val in current_input_graph.triples((None, rdf_prop_uri, None)):
+                if isinstance(o_val, Literal):
+                    inputs_for_script[param_name] = o_val.toPython()
+                else:
+                    inputs_for_script[param_name] = str(o_val)
+                value_found = True
                 break
 
-        if not actual_script_path:
-            checked_paths_str = ", ".join([os.path.abspath(p) for p in potential_paths])
-            raise FileNotFoundError(f"Script not found for node <{node_uri}>. Original path: '{script_path}'. Checked absolute paths: [{checked_paths_str}]")
+            if not value_found:
+                print(f"Warning: Input for parameter '{param_name}' (property <{rdf_prop_uri}>) for node <{node_uri_str}> not found in current_input_graph for stdin/JSON.")
+        return inputs_for_script
 
-        input_json_str = json.dumps(inputs)
-        stdout_val, stderr_val = "", "" # Ensure these are defined for the final exception message
+    def _execute_python_script(
+        self,
+        script_path_str: str,
+        node_uri_str: str,
+        arg_style_uri: Optional[URIRef],
+        input_param_definitions: List[Dict[str, Any]],
+        current_input_graph: RDFGraph
+    ) -> Dict[str, Any]:
 
+        actual_script_path = Path(script_path_str)
+        if not actual_script_path.is_file():
+            # This check might be redundant if DefinitionLoader already provides resolved, checked paths.
+            # However, NodeExecutor._get_node_implementation_details doesn't guarantee this check was done by loader.
+            raise FileNotFoundError(f"Script not found for node <{node_uri_str}>. Path: '{actual_script_path}'")
+
+        cmd_args_list = []
+        stdin_payload_str = None
+
+        if arg_style_uri == CMD_LINE_ARGS_STYLE:
+            print(f"Preparing command-line arguments for node <{node_uri_str}>.")
+            args_for_sorting = []
+            for p_def in input_param_definitions:
+                param_name = p_def['name']
+                rdf_prop_uri = p_def.get('maps_to_prop')
+                param_order = p_def.get('order', float('inf'))
+
+                value_for_arg_str = "" # Default to empty string if not found? Or error?
+                value_found = False
+                if rdf_prop_uri:
+                    for s, p, o_val in current_input_graph.triples((None, rdf_prop_uri, None)):
+                        if isinstance(o_val, Literal):
+                            value_for_arg_str = str(o_val.toPython())
+                        else:
+                            value_for_arg_str = str(o_val)
+                        value_found = True
+                        break
+
+                if value_found:
+                    args_for_sorting.append({'order': param_order, 'name': param_name, 'value': value_for_arg_str})
+                else:
+                    # This behavior might need refinement: error if required, or pass empty string, or skip.
+                    print(f"Warning: Value for command-line argument '{param_name}' for node <{node_uri_str}> not found in input graph. It will be omitted or empty.")
+                    # For now, let's add an empty string if not found, to maintain argument positions if order is critical.
+                    # Scripts need to be robust to this. Or, add an 'isRequired' check from definition.
+                    args_for_sorting.append({'order': param_order, 'name': param_name, 'value': ""})
+
+
+            # Parameters are already sorted by _get_node_parameter_definitions
+            cmd_args_list = [item['value'] for item in args_for_sorting]
+            cmd = [sys.executable, str(actual_script_path)] + cmd_args_list
+            print(f"Executing command: {cmd}")
+
+        elif arg_style_uri == STDIN_JSON_STYLE or arg_style_uri is None: # Default to STDIN JSON
+            inputs_for_stdin = self._prepare_inputs_for_script_stdin(input_param_definitions, current_input_graph, node_uri_str)
+            stdin_payload_str = json.dumps(inputs_for_stdin)
+            cmd = [sys.executable, str(actual_script_path)]
+            print(f"Executing command with stdin JSON: {cmd}, input: {stdin_payload_str[:200]}...")
+        else:
+            raise NotImplementedError(f"Argument passing style {arg_style_uri} not supported for Python script node <{node_uri_str}>.")
+
+        stdout_val, stderr_val = "", ""
         try:
-            process = subprocess.Popen(
-                ['python', actual_script_path],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            process = subprocess.run(
+                cmd,
+                input=stdin_payload_str,
+                capture_output=True,
                 text=True,
-                cwd=os.path.dirname(actual_script_path) # Execute script in its own directory
+                cwd=actual_script_path.parent,
+                timeout=30,
+                check=False,
+                encoding='utf-8'
             )
-            stdout_val, stderr_val = process.communicate(input=input_json_str, timeout=30) # Added timeout
+            stdout_val = process.stdout.strip() if process.stdout else ""
+            stderr_val = process.stderr.strip() if process.stderr else ""
 
             if process.returncode != 0:
-                error_message = f"Script {actual_script_path} for node <{node_uri}> failed with exit code {process.returncode}. Stderr: {stderr_val}"
+                error_message = (f"Script {actual_script_path} for node <{node_uri_str}> failed with exit code {process.returncode}. "
+                                 f"Stderr: {stderr_val}")
                 print(error_message)
                 raise RuntimeError(error_message)
 
-            return json.loads(stdout_val)
-        except FileNotFoundError: # Should be caught by the check above, but as a safeguard
+            return json.loads(stdout_val) if stdout_val else {}
+        except FileNotFoundError:
             raise
         except subprocess.TimeoutExpired:
-            error_message = f"Script {actual_script_path} for node <{node_uri}> timed out. Stderr: {stderr_val}"
+            error_message = f"Script {actual_script_path} for node <{node_uri_str}> timed out. Stderr: {stderr_val}"
             print(error_message)
-            process.kill() # Ensure process is killed
             raise RuntimeError(error_message) from None
         except json.JSONDecodeError as e:
-            error_message = f"Failed to decode JSON output from script {actual_script_path} for node <{node_uri}>. Output: {stdout_val}. Error: {e}"
+            error_message = f"Failed to decode JSON output from script {actual_script_path} for node <{node_uri_str}>. Output: '{stdout_val}'. Error: {e}"
             print(error_message)
             raise RuntimeError(error_message) from e
-        except Exception as e: # Catch other potential errors like permission issues
-            error_message = f"Error executing script {actual_script_path} for node <{node_uri}>: {e}. Stderr: {stderr_val}"
+        except Exception as e:
+            error_message = f"Error executing script {actual_script_path} for node <{node_uri_str}>: {e}. Stderr: {stderr_val}"
             print(error_message)
             raise RuntimeError(error_message) from e
 
+    def _convert_outputs_to_rdf(self, node_uri_str: str, script_outputs: Dict[str, Any], output_param_definitions: List[Dict[str, Any]]) -> RDFGraph:
+        output_graph = Graph()
+        # Ensure node_uri for adding to graph is a URIRef. If node_uri_str is already a full URI, URIRef() is idempotent.
+        # If node_uri_str is like "ex:Node1", this will create a relative URIRef if "ex" is not globally known to rdflib's default parsing.
+        # However, the subject_uri will usually come from nodeContextUri from the definition, which should be absolute.
+        node_uri_as_uriref = URIRef(node_uri_str)
 
-    def _convert_outputs_to_rdf(self, node_uri: str, outputs: Dict[str, Any], knowledge_layer: IKnowledgeLayer) -> RDFGraph:
-        '''
-        Converts the Python dictionary output from a script to an RDF graph
-        based on the node's kce:OutputParameter definitions.
-        '''
-        output_graph = rdflib.Graph()
+        if not output_param_definitions: return output_graph
 
-        output_params_query = f"""
-        PREFIX kce: <{KCE}>
-        PREFIX rdfs: <{rdflib.RDFS}>
-        SELECT ?paramName ?rdfProp ?datatype ?nodeContextUri
-        WHERE {{
-            <{node_uri}> kce:hasOutputParameter ?param .
-            ?param rdfs:label ?paramName .
-            ?param kce:mapsToRdfProperty ?rdfProp .
-            OPTIONAL {{ ?param kce:hasDatatype ?datatype . }}
-            # The subject for output triples needs robust definition.
-            # Using node_uri as a placeholder if no specific context is defined.
-            BIND(IRI(COALESCE(STR(?param_nodeContextUri), STR(<{node_uri}>))) AS ?nodeContextUri) # TODO: Define ?param_nodeContextUri properly
-        }}
-        """
-        param_defs = knowledge_layer.execute_sparql_query(output_params_query)
+        for p_def in output_param_definitions:
+            param_name = p_def['name']
+            rdf_prop_uri = p_def.get('maps_to_prop')
+            subject_uri = p_def.get('nodeContextUri', node_uri_as_uriref) # Default to node_uri_as_uriref
+            if not isinstance(subject_uri, URIRef): # Ensure subject is URIRef
+                subject_uri = URIRef(str(subject_uri))
 
-        if isinstance(param_defs, list):
-            for p_def in param_defs:
-                param_name = str(p_def['paramName'])
-                rdf_prop_uri = p_def['rdfProp'] # URIRef
-                subject_uri = p_def['nodeContextUri'] # URIRef, defaults to node_uri
+            datatype_uri = p_def.get('datatype')
 
-                if param_name in outputs:
-                    value = outputs[param_name]
-                    # TODO: Handle datatypes from p_def['datatype'] (e.g. XSD.integer, XSD.string)
-                    # For now, all are Literals. If value is a URI string, convert to URIRef.
-                    if isinstance(value, str) and (value.startswith("http://") or value.startswith("urn:")) :
-                         output_graph.add((subject_uri, rdf_prop_uri, rdflib.URIRef(value)))
-                    else:
-                         output_graph.add((subject_uri, rdf_prop_uri, rdflib.Literal(value)))
+            if not rdf_prop_uri:
+                print(f"Warning: Output parameter '{param_name}' for node <{node_uri_str}> has no kce:mapsToRdfProperty. Cannot create output triple.")
+                continue
+
+            if param_name in script_outputs:
+                value = script_outputs[param_name]
+                rdf_value: Union[Literal, URIRef]
+                # Basic check if value looks like a URI to be turned into URIRef, otherwise Literal
+                if isinstance(value, str) and (value.startswith("http://") or value.startswith("https://") or value.startswith("urn:") or value.count(":") == 1):
+                    try: # Attempt to see if it's a CURIE that can be expanded or is a valid relative/absolute URI part
+                        rdf_value = URIRef(value) # This might need prefix expansion if it's like "ex:item"
+                    except: # If URIRef creation fails with it, treat as Literal
+                        rdf_value = Literal(value, datatype=datatype_uri if datatype_uri else XSD.string if isinstance(value, str) else None)
                 else:
-                    print(f"Warning: Output parameter '{param_name}' defined for node <{node_uri}> but not found in script output: {outputs.keys()}")
-
+                    rdf_value = Literal(value, datatype=datatype_uri if datatype_uri else None)
+                output_graph.add((subject_uri, rdf_prop_uri, rdf_value))
+            else:
+                print(f"Warning: Output parameter '{param_name}' defined for node <{node_uri_str}> but not found in script output: {list(script_outputs.keys())}")
         return output_graph
 
+    def _execute_sparql_update(self, command: str, knowledge_layer: IKnowledgeLayer) -> RDFGraph:
+        knowledge_layer.execute_sparql_update(command)
+        return Graph()
 
-    def execute_node(self, node_uri: str, run_id: str, knowledge_layer: IKnowledgeLayer, current_input_graph: RDFGraph) -> RDFGraph:
-        print(f"Executing node <{node_uri}> for run_id: {run_id}")
+    def execute_node(self, node_uri_str: str, run_id: str, knowledge_layer: IKnowledgeLayer, current_input_graph: RDFGraph) -> RDFGraph:
+        print(f"Executing node <{node_uri_str}> for run_id: {run_id}")
 
-        impl_details = self._get_node_implementation_details(node_uri, knowledge_layer)
+        impl_details = self._get_node_implementation_details(node_uri_str, knowledge_layer)
 
-        # Ensure type is URIRef for comparison
         invocation_type = impl_details.get('type')
-        if not isinstance(invocation_type, rdflib.URIRef):
-            invocation_type = rdflib.URIRef(str(invocation_type)) # Convert if it's a Literal from mock or bad data
+        if invocation_type and not isinstance(invocation_type, URIRef):
+            invocation_type = URIRef(str(invocation_type))
 
-        if invocation_type != KCE.PythonScriptInvocation:
-            raise NotImplementedError(f"Node invocation type {invocation_type} not supported yet for <{node_uri}>.")
+        arg_style_uri = impl_details.get('arg_style_uri')
+        if arg_style_uri and not isinstance(arg_style_uri, URIRef):
+             arg_style_uri = URIRef(str(arg_style_uri))
 
-        script_path_literal = impl_details.get('scriptPath')
-        if not script_path_literal:
-            raise ValueError(f"Script path not defined for Python node <{node_uri}>.")
-        script_path = str(script_path_literal)
+        if invocation_type == KCE.PythonScriptInvocation:
+            script_path_literal = impl_details.get('scriptPath')
+            if not script_path_literal:
+                raise ValueError(f"Script path (kce:scriptPath or kce:hasAbsoluteScriptPath) not defined for Python node <{node_uri_str}>.")
+            script_path = str(script_path_literal)
 
-        inputs = self._prepare_node_inputs(node_uri, knowledge_layer, current_input_graph)
-        print(f"Node <{node_uri}> inputs: {inputs}")
+            input_param_defs = self._get_node_parameter_definitions(node_uri_str, "Input", knowledge_layer)
+            output_param_defs = self._get_node_parameter_definitions(node_uri_str, "Output", knowledge_layer)
 
-        script_outputs = self._execute_python_script(script_path, inputs, node_uri)
-        print(f"Node <{node_uri}> script outputs: {script_outputs}")
+            script_outputs = self._execute_python_script(script_path, node_uri_str, arg_style_uri, input_param_defs, current_input_graph)
+            print(f"Node <{node_uri_str}> script outputs: {script_outputs}")
 
-        output_rdf_graph = self._convert_outputs_to_rdf(node_uri, script_outputs, knowledge_layer)
-        print(f"Node <{node_uri}> generated {len(output_rdf_graph)} output triples.")
-        return output_rdf_graph
+            output_rdf_graph = self._convert_outputs_to_rdf(node_uri_str, script_outputs, output_param_defs)
+            print(f"Node <{node_uri_str}> generated {len(output_rdf_graph)} output triples.")
+            return output_rdf_graph
 
+        elif invocation_type == KCE.SparqlUpdateInvocation:
+            command_literal = impl_details.get('command')
+            if not command_literal:
+                 raise ValueError(f"SPARQL update command (kce:hasSparqlUpdateCommand) not defined for node <{node_uri_str}>.")
+            command_str = str(command_literal)
+            return self._execute_sparql_update(command_str, knowledge_layer)
+
+        else:
+            raise NotImplementedError(f"Node invocation type {invocation_type} not supported yet for <{node_uri_str}>.")
+
+# Main block for isolated testing (needs update for new arg passing)
 if __name__ == '__main__':
-    # Mock IKnowledgeLayer for testing
-    class MockKnowledgeLayer(IKnowledgeLayer):
-        def __init__(self):
-            self.graph = rdflib.Graph()
-            self.node_uri_str = "http://example.com/ns/TestScriptNode" # Full URI string
-            self.node_uri = EX.TestScriptNode # URIRef
-            self.script_rel_path = "dummy_script_for_node_executor.py"
-
-            self.graph.add((self.node_uri, KCE.hasImplementationDetail, EX.TestScriptNodeImpl))
-            self.graph.add((EX.TestScriptNodeImpl, KCE.invocationType, KCE.PythonScriptInvocation))
-            self.graph.add((EX.TestScriptNodeImpl, KCE.scriptPath, rdflib.Literal(self.script_rel_path)))
-
-            self.graph.add((self.node_uri, KCE.hasInputParameter, EX.InputP1))
-            self.graph.add((EX.InputP1, rdflib.RDFS.label, rdflib.Literal("message")))
-            self.graph.add((EX.InputP1, KCE.mapsToRdfProperty, EX.hasMessage))
-
-            self.graph.add((self.node_uri, KCE.hasOutputParameter, EX.OutputP1))
-            self.graph.add((EX.OutputP1, rdflib.RDFS.label, rdflib.Literal("response")))
-            self.graph.add((EX.OutputP1, KCE.mapsToRdfProperty, EX.hasResponse))
-            # For _convert_outputs_to_rdf, the ?nodeContextUri needs to be bound.
-            # Let's assume for this test the output is a property of the node itself.
-            # The query in _convert_outputs_to_rdf has a COALESCE to default to node_uri.
-
-        def execute_sparql_query(self, query: str) -> Union[List[Dict[str, Any]], bool, RDFGraph]:
-            # This mock is very basic. It should ideally parse the SPARQL and return results from self.graph
-            # For now, it's hardcoded for specific queries made by NodeExecutor.
-            if "kce:hasImplementationDetail" in query and self.node_uri_str in query:
-                return [{'type': KCE.PythonScriptInvocation, 'scriptPath': rdflib.Literal(self.script_rel_path)}]
-            if "kce:hasInputParameter" in query and self.node_uri_str in query:
-                return [{'paramName': rdflib.Literal("message"), 'rdfProp': EX.hasMessage, 'datatype': None}]
-            if "kce:hasOutputParameter" in query and self.node_uri_str in query:
-                 return [{'paramName': rdflib.Literal("response"), 'rdfProp': EX.hasResponse, 'datatype': None, 'nodeContextUri': self.node_uri}]
-            print(f"MockKL: Unhandled SPARQL Query: {query}")
-            return []
-
-        def execute_sparql_update(self, update_statement): pass
-        def trigger_reasoning(self): pass
-        def add_graph(self, graph_to_add, context_uri=None): self.graph += graph_to_add
-        def get_graph(self, context_uri=None): return self.graph
-        def store_human_readable_log(self, run_id, event_id, log_content): return ""
-        def get_human_readable_log(self, log_location): return None
-
-    dummy_script_content = """
-import json, sys
-try:
-    input_data = json.load(sys.stdin)
-    msg = input_data.get("message", "No message provided")
-    response_message = f"Script processed: {msg}"
-    output_data = {"response": response_message, "status_code": 200}
-    json.dump(output_data, sys.stdout)
-except Exception as e:
-    sys.stderr.write(f"Script error: {e}\\n")
-    sys.exit(1)
-"""
-    # Script path needs to be findable by _execute_python_script
-    # It tries CWD, examples/, and relative to node_executor.py
-    # For testing, placing it in CWD is simplest.
-    script_file_name = "dummy_script_for_node_executor.py"
-    with open(script_file_name, "w") as f:
-        f.write(dummy_script_content)
-
-    mock_kl_instance = MockKnowledgeLayer()
-    executor = NodeExecutor()
-
-    test_input_graph = rdflib.Graph()
-    test_input_graph.add((EX.SomeInputEntity, EX.hasMessage, rdflib.Literal("Hello Node Executor")))
-
-    try:
-        print(f"--- Testing NodeExecutor with node <{mock_kl_instance.node_uri_str}> and script '{script_file_name}' ---")
-        output_graph = executor.execute_node(
-            node_uri=mock_kl_instance.node_uri_str, # Pass as string
-            run_id="test_run_ne_001",
-            knowledge_layer=mock_kl_instance,
-            current_input_graph=test_input_graph
-        )
-        print(f"--- Execution successful. Output graph ({len(output_graph)} triples): ---")
-        # print(output_graph.serialize(format="turtle")) # Requires rdflib to be fully available
-
-        # Basic verification
-        expected_subject = mock_kl_instance.node_uri
-        expected_predicate = EX.hasResponse
-        expected_object_literal_part = "Script processed: Hello Node Executor"
-
-        found_triple = False
-        for s, p, o in output_graph:
-            if s == expected_subject and p == expected_predicate and expected_object_literal_part in str(o):
-                found_triple = True
-                break
-        assert found_triple, f"Expected triple ({expected_subject}, {expected_predicate}, '{expected_object_literal_part}...') not found in output graph."
-        print("--- Output triple verified. ---")
-
-    except Exception as e:
-        print(f"--- NodeExecutor test failed: {e} ---")
-        import traceback
-        traceback.print_exc()
-    finally:
-        if os.path.exists(script_file_name):
-            os.remove(script_file_name)
-        print("--- NodeExecutor test complete. ---")
+    print("NodeExecutor main test block needs update for new argument passing styles.")

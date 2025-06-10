@@ -2,7 +2,8 @@
 
 workflows:
   # Main Workflow for designing and costing the simplified elevator rear wall
-  - id: "ex:SimplifiedElevatorPanelWorkflow"
+  - type: "Workflow" # Added type field
+    id: "ex:SimplifiedElevatorPanelWorkflow"
     label: "Simplified Elevator Panel Design and Costing Workflow"
     description: "Calculates dimensions, features, and costs for a simplified elevator rear wall assembly."
     steps:

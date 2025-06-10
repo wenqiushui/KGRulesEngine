@@ -1,0 +1,4 @@
+{
+  "target_description_label": "Elevator Panel Scenario 1 - Assembly Cost Calculated",
+  "sparql_ask_query": "PREFIX kce: <http://kce.com/ontology/core#>\nPREFIX domain: <http://kce.com/example/elevator_panel#>\n\nASK WHERE {\n  ?assembly_uri a domain:RearWallAssembly ;\n                  kce:assemblyCostCalculated true .\n}"
+}
