@@ -59,7 +59,7 @@ def dummy_ontology_file_two(tmp_path):
 # Fixture for persistent store tests
 @pytest.fixture
 def persistent_store_manager(tmp_path):
-    db_file = tmp_path / "persistent_store.sqlite"
+    db_file = tmp_path / "persistent_store.ttl"  # Changed extension
     manager = RdfStoreManager(db_path=str(db_file))
     yield manager
     manager.close()
@@ -202,9 +202,9 @@ def test_basic_reasoning(reasoning_ontology_file):
         manager.close()
 
 # --- New Persistent Store Tests ---
-@pytest.mark.skip(reason="Persistent store tests failing due to issues with SQLAlchemyStore v0.5.4 returning None for triples()")
+# @pytest.mark.skip(reason="Persistent store tests failing due to issues with SQLAlchemyStore v0.5.4 returning None for triples()") # Unskipped
 def test_persistent_add_select(tmp_path):
-    db_file = tmp_path / "test_persistent_crud.sqlite"
+    db_file = tmp_path / "test_persistent_add_select.ttl" # Changed extension and made filename specific
     manager1 = RdfStoreManager(db_path=str(db_file))
 
     subject = EX.persistentSubject
@@ -228,9 +228,9 @@ def test_persistent_add_select(tmp_path):
     finally:
         manager2.close()
 
-@pytest.mark.skip(reason="Persistent store tests failing due to issues with SQLAlchemyStore v0.5.4 returning None for triples()")
+# @pytest.mark.skip(reason="Persistent store tests failing due to issues with SQLAlchemyStore v0.5.4 returning None for triples()") # Unskipped
 def test_persistent_clear(tmp_path):
-    db_file = tmp_path / "test_persistent_clear.sqlite"
+    db_file = tmp_path / "test_persistent_clear.ttl" # Changed extension and made filename specific
     manager1 = RdfStoreManager(db_path=str(db_file))
 
     subject = EX.dataToClear

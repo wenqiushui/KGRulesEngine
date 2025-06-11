@@ -1,10 +1,6 @@
 # KCE Core Dependencies
 rdflib>=7.1.2
-# rdflib-sqlalchemy is in maintenance mode; pinning to a known version.
-# Last release 0.5.4 (Mar 2023) likely targets SQLAlchemy 1.4.x or early 2.x.
-# Let's try with SQLAlchemy 1.4.x first for wider compatibility.
-rdflib-sqlalchemy>=0.5.4
-SQLAlchemy>=1.4.0,<2.0
+# rdflib-sqlalchemy and SQLAlchemy removed as per new storage mechanism.
 
 pyyaml>=6.0
 click>=8.0

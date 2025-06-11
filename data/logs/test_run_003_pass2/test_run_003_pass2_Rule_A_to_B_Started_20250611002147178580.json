@@ -1,0 +1,13 @@
+{
+  "event_id": "test_run_003_pass2_Rule_A_to_B_Started_20250611002147178580",
+  "run_id": "test_run_003_pass2",
+  "timestamp": "2025-06-11T00:21:47.178637",
+  "event_type": "RuleEvaluationStart",
+  "operation_uri": "http://example.com/ns#Rule_A_to_B",
+  "status": "Started",
+  "inputs": {
+    "antecedent_query": "ASK { ex:multiTest ex:status 'A' . }"
+  },
+  "outputs": null,
+  "message": null
+}

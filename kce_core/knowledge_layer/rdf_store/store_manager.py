@@ -1,4 +1,4 @@
-import rdflib
+import rdflib # Ensure rdflib is imported at the top level
 from rdflib import Graph, URIRef, Literal, Namespace # Ensure all are imported
 # Attempting alternative import path for Memory store plugin
 try:
@@ -6,8 +6,8 @@ try:
 except ImportError:
     from rdflib.plugins.stores.memory import Memory as MemoryStorePlugin # Alternative path
 from rdflib.plugins.sparql import prepareQuery, prepareUpdate
-from rdflib_sqlalchemy.store import Store as SQLAlchemyStore
-# from sqlalchemy import create_engine
+# SQLAlchemyStore removed
+# from sqlalchemy import create_engine # Ensure this is removed if present
 import owlrl
 from typing import List, Dict, Any, Optional, Union, Tuple
 import os
@@ -20,7 +20,7 @@ kce_logger = logging.getLogger(__name__)
 if not kce_logger.handlers:
     kce_logger.addHandler(logging.NullHandler())
 
-DEFAULT_DB_FILENAME = "kce_knowledge_base.sqlite"
+DEFAULT_DB_FILENAME = "kce_knowledge_base.sqlite" # This might be misleading now, as we default to .ttl
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_LOG_DIR = DEFAULT_DATA_DIR / "logs"
 KCE_GRAPH_IDENTIFIER = URIRef("http://kce.com/graph")
@@ -29,51 +29,39 @@ class RdfStoreManager(IKnowledgeLayer):
     def __init__(self, db_path: Optional[str] = None, ontology_files: Optional[List[str]] = None, log_dir: Optional[str] = None):
         self.db_path = db_path
         self.graph_identifier = KCE_GRAPH_IDENTIFIER
-        self.store = None
-        self.db_uri = None
+        # self.store = None # Removed, Graph manages its own store
+        # self.db_uri = None # Removed, not needed for file or memory stores in this simplified model
         self._is_in_memory = False
 
         self.log_dir = Path(log_dir if log_dir else DEFAULT_LOG_DIR).resolve()
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         if self.db_path is None or self.db_path == ':memory:':
-            kce_logger.info("RdfStoreManager initializing with explicit RDFLib MemoryStorePlugin.")
+            kce_logger.info("RdfStoreManager initializing with in-memory RDFLib Graph.")
             self._is_in_memory = True
-            self.store = MemoryStorePlugin() # Instantiate the memory store plugin
-            self.graph = Graph(store=self.store, identifier=self.graph_identifier)
-            # No graph.open() needed for MemoryStorePlugin
-        else:  # Persistent store using SQLAlchemy
+            self.graph = Graph(identifier=self.graph_identifier)
+        else:  # File-based persistent store
             self._is_in_memory = False
-            kce_logger.info(f"RdfStoreManager initializing with SQLAlchemyStore for persistent storage: {self.db_path}")
-
-            if "://" not in self.db_path:
-                resolved_db_path = Path(self.db_path).resolve()
-                resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
-                self.db_uri = f"sqlite:///{resolved_db_path}"
+            resolved_db_path = Path(self.db_path).resolve()
+            kce_logger.info(f"RdfStoreManager initializing with file-based storage: {resolved_db_path}")
+            self.graph = Graph(identifier=self.graph_identifier)
+            if resolved_db_path.exists() and resolved_db_path.is_file():
+                try:
+                    # Guess format based on extension, fallback to turtle
+                    file_format = rdflib.util.guess_format(str(resolved_db_path)) or "turtle"
+                    self.graph.parse(str(resolved_db_path), format=file_format)
+                    kce_logger.info(f"Loaded graph from existing file: {resolved_db_path} with format {file_format}")
+                except Exception as e:
+                    kce_logger.error(f"Failed to parse existing graph file {resolved_db_path}: {e}. Initializing empty graph.", exc_info=True)
+                    # Initialize an empty graph if parsing fails
+                    self.graph = Graph(identifier=self.graph_identifier)
             else:
-                self.db_uri = self.db_path
+                kce_logger.info(f"Graph file not found at {resolved_db_path}. Initializing an empty graph. It will be saved on close.")
+                # Ensure parent directory exists for when we save later
+                resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
+                self.graph = Graph(identifier=self.graph_identifier) # Ensure graph is initialized
 
-            self.store = SQLAlchemyStore(identifier=self.graph_identifier, configuration=self.db_uri)
-            try:
-                # Explicitly open the store. For SQLAlchemyStore, this should handle table creation.
-                self.store.open(configuration=self.db_uri, create=True)
-                kce_logger.info(f"SQLAlchemyStore opened successfully for URI: {self.db_uri}")
-            except Exception as e:
-                kce_logger.error(f"Failed to open SQLAlchemyStore with URI {self.db_uri}: {e}", exc_info=True)
-                # This might be critical, consider re-raising or alternative handling
-                # For now, let's see if graph init works or also fails
-
-            self.graph = Graph(store=self.store, identifier=self.graph_identifier)
-            # Depending on the store plugin, graph.open() might be redundant if store.open() did everything,
-            # or it might be necessary. For safety and to follow rdflib patterns:
-            try:
-                self.graph.open(self.db_uri, create=True) # create=True might be ignored if store already created tables
-                kce_logger.info(f"Persistent graph (using SQLAlchemyStore) opened successfully for URI: {self.db_uri}")
-            except Exception as e:
-                kce_logger.error(f"Failed to open graph (using SQLAlchemyStore) with URI {self.db_uri}: {e}", exc_info=True)
-                raise
-
-        if ontology_files and self.graph is not None:
+        if ontology_files and self.graph is not None: # Ensure self.graph is checked here
             for ont_file in ontology_files:
                 try:
                     ont_path = Path(ont_file).resolve()
@@ -146,29 +134,15 @@ class RdfStoreManager(IKnowledgeLayer):
             kce_logger.error("Main graph not initialized. Cannot add graph.")
             return
 
-        target_graph = self.graph
-        log_msg_context = "default graph"
-
         if context_uri:
-            # Note: self.store is None for in-memory MemoryStorePlugin.
-            # It is an SQLAlchemyStore instance for persistent dbs.
-            if self.store and not self._is_in_memory :
-                target_graph_identifier = URIRef(context_uri)
-                target_graph = Graph(store=self.store, identifier=target_graph_identifier)
-                try:
-                    target_graph.open(self.db_uri, create=False)
-                except Exception as e:
-                    kce_logger.error(f"Failed to open named graph context {context_uri}: {e}. Triples will likely be added to default graph or fail.", exc_info=True)
-                    target_graph = self.graph
-                    log_msg_context = "default graph (fallback from named)"
-            else:
-                kce_logger.warning(f"Context URI '{context_uri}' provided for in-memory store. Operations will target default graph as MemoryStorePlugin does not inherently support named contexts in this setup.")
+            kce_logger.warning(f"Context URI '{context_uri}' provided. File-based and simple in-memory stores operate on a single default graph. Context URI will be ignored.")
 
+        # All operations target self.graph directly
         for s, p, o in graph_to_add:
-            target_graph.add((s,p,o))
-        if hasattr(target_graph, 'commit') and callable(target_graph.commit):
-            target_graph.commit()
-        kce_logger.debug(f"Added {len(graph_to_add)} triples to {log_msg_context}.")
+            self.graph.add((s,p,o))
+        if hasattr(self.graph, 'commit') and callable(self.graph.commit):
+            self.graph.commit() # This commit is for rdflib's internal store if it supports it.
+        kce_logger.debug(f"Added {len(graph_to_add)} triples to the graph.")
 
     def get_graph(self, context_uri: Optional[str] = None) -> RDFGraph:
         if self.graph is None:
@@ -176,18 +150,7 @@ class RdfStoreManager(IKnowledgeLayer):
             return Graph()
 
         if context_uri:
-            if self.store and not self._is_in_memory:
-                named_graph_identifier = URIRef(context_uri)
-                named_g = Graph(store=self.store, identifier=named_graph_identifier)
-                try:
-                    named_g.open(self.db_uri, create=False)
-                    return named_g
-                except Exception as e:
-                    kce_logger.error(f"Failed to open named graph {context_uri} for get: {e}", exc_info=True)
-                    return Graph()
-            else:
-                kce_logger.warning(f"Context URI '{context_uri}' requested for in-memory store. Returning default graph.")
-                return self.graph
+            kce_logger.warning(f"Context URI '{context_uri}' requested. File-based and simple in-memory stores operate on a single default graph. Returning the default graph.")
         return self.graph
 
     def store_human_readable_log(self, run_id: str, event_id: str, log_content: str) -> LogLocation:
@@ -218,31 +181,49 @@ class RdfStoreManager(IKnowledgeLayer):
     def close(self):
         db_identity = self.db_path if self.db_path and not self._is_in_memory else "in-memory store"
         if self.graph is not None:
-            self.graph.close()
+            if not self._is_in_memory and self.db_path and self.db_path != ':memory:':
+                resolved_db_path = Path(self.db_path).resolve()
+                try:
+                    # Determine format, default to turtle.
+                    # If db_path has a common RDF extension, use that, otherwise turtle.
+                    file_format = rdflib.util.guess_format(str(resolved_db_path))
+                    if file_format is None:
+                        # If filename is e.g. "knowledge_base.db" and we want to save as turtle:
+                        # We should ensure self.db_path implies a .ttl or similar, or save with a fixed extension.
+                        # For now, we'll try to use turtle if format is unknown or not typical RDF.
+                        # A more robust solution might involve checking the db_path extension or having a dedicated save format.
+                        kce_logger.info(f"Output format for {resolved_db_path} not guessed, defaulting to turtle. Consider using .ttl extension.")
+                        file_format = "turtle"
+                        # To ensure it saves with a .ttl extension if not already present:
+                        # if not str(resolved_db_path).endswith(f".{file_format}"):
+                        #    resolved_db_path = resolved_db_path.with_suffix(f".{file_format}")
+                        #    kce_logger.info(f"Saving to {resolved_db_path} to ensure turtle format.")
 
-        # Defensive check for the store closing logic
-        if self._is_in_memory is False: # Explicitly check boolean state
-            if self.store and hasattr(self.store, 'close') and callable(self.store.close):
-                self.store.close()
+                    # Ensure parent directory exists
+                    resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    self.graph.serialize(destination=str(resolved_db_path), format=file_format)
+                    kce_logger.info(f"Graph serialized to {resolved_db_path} in {file_format} format.")
+                except Exception as e:
+                    kce_logger.error(f"Failed to serialize graph to {resolved_db_path}: {e}", exc_info=True)
+
+            self.graph.close() # Close the rdflib graph itself
+
+        # self.store is removed, so no store.close() needed.
         kce_logger.info(f"RdfStoreManager for {db_identity} closed.")
 
     def clear_store(self):
-        if self.graph is None:
+        if self.graph is None: # Should not happen if __init__ is correct
             kce_logger.error("Graph not initialized. Cannot clear store.")
             return
 
-        kce_logger.info(f"Clearing store. Is in-memory: {self._is_in_memory}")
-        if self._is_in_memory:
-            kce_logger.info("Re-initializing in-memory graph by creating new MemoryStorePlugin and Graph.")
-            self.store = MemoryStorePlugin() # Create a new store instance
-            self.graph = Graph(store=self.store, identifier=self.graph_identifier)
-        elif self.store: # Persistent SQLAlchemyStore
-            kce_logger.info("Removing all triples from persistent graph.")
-            self.graph.remove((None, None, None))
-            if hasattr(self.graph, 'commit') and callable(self.graph.commit):
-                self.graph.commit()
-        else:
-            kce_logger.warning("Store type unclear or not properly initialized. Cannot effectively clear.")
+        kce_logger.info(f"Clearing store. Is in-memory: {self._is_in_memory}. Re-initializing graph.")
+        # For both in-memory and file-based, clearing means creating a new empty graph.
+        # For file-based, the old file content is not wiped until .close() is called.
+        self.graph = Graph(identifier=self.graph_identifier)
+        # If there were ontology files, they should ideally be reloaded here if clear means "reset to initial state"
+        # For now, "clear" means an empty graph. This can be revisited.
+        kce_logger.info("Graph re-initialized. Previous content (if any) will be overwritten on close for file-based stores.")
 
     def __enter__(self): return self
     def __exit__(self, exc_type, exc_val, exc_tb): self.close()

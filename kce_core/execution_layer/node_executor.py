@@ -143,35 +143,49 @@ class NodeExecutor(INodeExecutor):
 
         if arg_style_uri == CMD_LINE_ARGS_STYLE:
             print(f"Preparing command-line arguments for node <{node_uri_str}>.")
+            print(f"Raw input_param_definitions for <{node_uri_str}>: {input_param_definitions}") # DEBUG LOG
             args_for_sorting = []
             for p_def in input_param_definitions:
                 param_name = p_def['name']
                 rdf_prop_uri = p_def.get('maps_to_prop')
-                param_order = p_def.get('order', float('inf'))
+                param_order_from_def = p_def.get('order', float('inf')) # Corrected to param_order_from_def
 
-                value_for_arg_str = "" # Default to empty string if not found? Or error?
+                print(f"Processing param: {param_name}, order: {param_order_from_def}, maps_to_prop: {rdf_prop_uri}") # DEBUG LOG
+
+                value_for_arg_str = ""
                 value_found = False
                 if rdf_prop_uri:
-                    for s, p, o_val in current_input_graph.triples((None, rdf_prop_uri, None)):
+                    # Ensure rdf_prop_uri is a URIRef for the query
+                    if not isinstance(rdf_prop_uri, URIRef): rdf_prop_uri = URIRef(str(rdf_prop_uri))
+
+                    found_triples_debug = list(current_input_graph.triples((None, rdf_prop_uri, None)))
+                    print(f"  Searching for triples with P=<{(rdf_prop_uri if rdf_prop_uri else 'None')}>. Found {len(found_triples_debug)}: {found_triples_debug[:3]}") # DEBUG LOG
+
+                    for s, p, o_val in found_triples_debug: # Use the fetched list
                         if isinstance(o_val, Literal):
                             value_for_arg_str = str(o_val.toPython())
                         else:
                             value_for_arg_str = str(o_val)
                         value_found = True
+                        print(f"  Found value for {param_name}: '{value_for_arg_str}'") # DEBUG LOG
                         break
 
+                if not value_found:
+                     print(f"  Value for {param_name} (prop: {rdf_prop_uri}) not found in current_input_graph.") # DEBUG LOG
+
+
                 if value_found:
-                    args_for_sorting.append({'order': param_order, 'name': param_name, 'value': value_for_arg_str})
+                    args_for_sorting.append({'order': param_order_from_def, 'name': param_name, 'value': value_for_arg_str})
                 else:
-                    # This behavior might need refinement: error if required, or pass empty string, or skip.
-                    print(f"Warning: Value for command-line argument '{param_name}' for node <{node_uri_str}> not found in input graph. It will be omitted or empty.")
-                    # For now, let's add an empty string if not found, to maintain argument positions if order is critical.
-                    # Scripts need to be robust to this. Or, add an 'isRequired' check from definition.
-                    args_for_sorting.append({'order': param_order, 'name': param_name, 'value': ""})
+                    print(f"Warning: Value for command-line argument '{param_name}' for node <{node_uri_str}> (prop: {rdf_prop_uri}) not found in input graph. It will be omitted or empty.")
+                    args_for_sorting.append({'order': param_order_from_def, 'name': param_name, 'value': ""})
 
+            # input_param_definitions should already be sorted by 'order', then 'name'.
+            # So, iterating through it should build args_for_sorting in the correct order.
+            # The list `args_for_sorting` itself is not re-sorted before creating `cmd_args_list`.
+            # This relies on `input_param_definitions` being correctly sorted by `_get_node_parameter_definitions`.
 
-            # Parameters are already sorted by _get_node_parameter_definitions
-            cmd_args_list = [item['value'] for item in args_for_sorting]
+            cmd_args_list = [item['value'] for item in args_for_sorting] # This uses the order from input_param_definitions
             cmd = [sys.executable, str(actual_script_path)] + cmd_args_list
             print(f"Executing command: {cmd}")
 

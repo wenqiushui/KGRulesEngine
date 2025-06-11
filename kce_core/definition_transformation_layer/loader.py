@@ -7,6 +7,8 @@ from rdflib.namespace import RDF, RDFS, XSD
 from typing import Any, Dict # Added Any and Dict for type hinting
 import uuid # For fallback URI generation
 import logging # For kce_logger
+from rdflib.collection import Collection # Added for RDF List
+from rdflib import BNode # Added for RDF List
 
 # Assuming interfaces.py is two levels up from definition_transformation_layer directory
 from ..interfaces import IDefinitionTransformationLayer, IKnowledgeLayer, LoadStatus, InitialStateGraph, DirectoryPath
@@ -61,43 +63,70 @@ class DefinitionLoader(IDefinitionTransformationLayer):
         if "precondition" in data: g.add((node_uri, KCE.hasPrecondition, Literal(data["precondition"], datatype=KCE.SparqlQuery)))
         if "effect" in data: g.add((node_uri, KCE.hasEffect, Literal(data["effect"], datatype=KCE.SparqlUpdateTemplate)))
 
+        param_name_to_uri_map = {} # To store input param names to URIs for ordering
+
         for param_type_key, kce_predicate, param_rdf_type in [("inputs", KCE.hasInputParameter, KCE.InputParameter),
                                                        ("outputs", KCE.hasOutputParameter, KCE.OutputParameter)]:
             if param_type_key in data:
                 for p_data in data[param_type_key]:
                     param_name = p_data.get("name")
                     if not param_name: continue
-                    param_uri_str = p_data.get("uri", f"{node_uri_str}/param/{param_name}")
+                    param_uri_str = p_data.get("uri", f"{node_uri_str}/param/{param_name}") # Default URI construction
                     param_uri = self._prefix_uri(param_uri_str)
                     g.add((param_uri, RDF.type, param_rdf_type))
                     g.add((param_uri, RDFS.label, Literal(param_name)))
-                    if "mapsToRdfProperty" in p_data: g.add((param_uri, KCE.mapsToRdfProperty, self._prefix_uri(p_data["mapsToRdfProperty"])))
+                    if "maps_to_rdf_property" in p_data: # Corrected key
+                        g.add((param_uri, KCE.mapsToRdfProperty, self._prefix_uri(p_data["maps_to_rdf_property"])))
                     if "datatype" in p_data: g.add((param_uri, KCE.hasDatatype, self._prefix_uri(p_data["datatype"])))
                     if "isRequired" in p_data and param_type_key == "inputs":
                         g.add((param_uri, KCE.isRequired, Literal(bool(p_data["isRequired"]), datatype=XSD.boolean)))
                     g.add((node_uri, kce_predicate, param_uri))
+                    if param_type_key == "inputs":
+                        param_name_to_uri_map[param_name] = param_uri
 
-        # Use "invocation" from YAML, mapping to "implementation" conceptually
+
+        # Use "invocation" from YAML, mapping to "implementation" conceptually for some parts
         if "invocation" in data:
-            impl_data = data["invocation"] # Changed from "implementation"
-            impl_uri_str = f"{node_uri_str}/implementation" # Keep internal model consistent
+            impl_data = data["invocation"]
+
+            # Create the ImplementationDetail node (impl_uri)
+            # This URI should be unique for each node's implementation details.
+            impl_uri_str = f"{node_uri_str}/implementation_detail"
             impl_uri = self._prefix_uri(impl_uri_str)
+            g.add((node_uri, KCE.hasImplementationDetail, impl_uri))
             g.add((impl_uri, RDF.type, KCE.ImplementationDetail))
 
+            # 1. Store kce:argumentPassingStyle on impl_uri
+            arg_style_yaml_key = "kce:argumentPassingStyle" # Key as in YAML
+            arg_style_value = impl_data.get(arg_style_yaml_key)
+            if arg_style_value:
+                # Assuming KCE.argumentPassingStyle is defined, otherwise use self._prefix_uri
+                g.add((impl_uri, self._prefix_uri("kce:argumentPassingStyle"), self._prefix_uri(arg_style_value)))
+
+            # 2. Store kce:parameterOrder on impl_uri as an RDF List
+            param_order_yaml_key = "kce:parameterOrder" # Key as in YAML
+            ordered_param_names = impl_data.get(param_order_yaml_key)
+            if ordered_param_names and isinstance(ordered_param_names, list):
+                if ordered_param_names: # Ensure list is not empty before creating collection
+                    order_collection = Collection(g, BNode()) # Create a new BNode for the list head
+                    for name_str in ordered_param_names:
+                        order_collection.append(Literal(name_str))
+                    # Assuming KCE.parameterOrder is defined for the predicate, otherwise use self._prefix_uri
+                    g.add((impl_uri, self._prefix_uri("kce:parameterOrder"), order_collection.uri))
+                else:
+                    # Optionally handle empty list e.g. by adding rdf:nil or omitting the triple
+                    g.add((impl_uri, self._prefix_uri("kce:parameterOrder"), RDF.nil))
+
+
+            # Store invocationType (e.g., PythonScript) on impl_uri
             impl_type_str = impl_data.get("type")
             if impl_type_str:
-                # Map common strings to KCE ontology terms
-                if impl_type_str == "PythonScript":
-                    invocation_type_uri = KCE.PythonScriptInvocation
-                elif impl_type_str == "SparqlUpdate": # Example for future
-                    invocation_type_uri = KCE.SparqlUpdateInvocation
-                # Add other mappings as necessary
-                else:
-                    # Fallback to _prefix_uri if it's a prefixed URI or full URI
-                    invocation_type_uri = self._prefix_uri(impl_type_str)
+                if impl_type_str == "PythonScript": invocation_type_uri = KCE.PythonScriptInvocation
+                elif impl_type_str == "SparqlUpdate": invocation_type_uri = KCE.SparqlUpdateInvocation
+                else: invocation_type_uri = self._prefix_uri(impl_type_str)
                 g.add((impl_uri, KCE.invocationType, invocation_type_uri))
 
-            # YAML uses 'script_path', Python dict key from yaml.load is 'script_path'
+            # Store scriptPath on impl_uri
             original_script_path = impl_data.get("script_path")
             if original_script_path:
                 yaml_file_path_obj = Path(file_path_str)
@@ -106,7 +135,9 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                 g.add((impl_uri, KCE.scriptPath, Literal(str(resolved_script_path))))
                 if not resolved_script_path.is_file():
                     kce_logger.warning(f"Script at resolved path {resolved_script_path} (from '{original_script_path}' in {file_path_str}) was not found. NodeExecutor will verify at runtime.")
-            g.add((node_uri, KCE.hasImplementationDetail, impl_uri))
+
+            # The triple (node_uri, KCE.hasImplementationDetail, impl_uri) is added at the beginning of this block.
+            # No need to add it again. The previous duplicate g.add((node_uri, KCE.hasImplementationDetail, impl_uri)) is removed.
 
         for prefix, namespace_obj in self.kce_ns_map.items(): g.bind(prefix, namespace_obj)
         return g

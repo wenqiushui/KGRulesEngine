@@ -1,0 +1,11 @@
+{
+  "event_id": "test_run_25d5e910-4401-4a58-9ab7-0b1235c1edf5_system_event_Triggered_20250611002402147101",
+  "run_id": "test_run_25d5e910-4401-4a58-9ab7-0b1235c1edf5",
+  "timestamp": "2025-06-11T00:24:02.147120",
+  "event_type": "InitialRuleApplicationTrigger",
+  "operation_uri": null,
+  "status": "Triggered",
+  "inputs": null,
+  "outputs": null,
+  "message": "Triggering initial rule application."
+}

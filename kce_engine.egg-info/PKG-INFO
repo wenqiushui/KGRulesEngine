@@ -1,0 +1,40 @@
+Metadata-Version: 2.4
+Name: kce_engine
+Version: 0.3.0
+Summary: Knowledge-CAD-Engine for knowledge-driven automation.
+Home-page: http://kce.example.com/kce_engine
+Author: KCE Development Team
+Author-email: dev@kce.example.com
+Project-URL: Documentation, http://kce.example.com/docs
+Project-URL: Source, http://kce.example.com/source
+Project-URL: Tracker, http://kce.example.com/issues
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: rdflib>=7.1.2
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: click>=8.0
+Requires-Dist: owlrl>=7.1.1
+Requires-Dist: pytest>=8.0.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: project-url
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+Knowledge-CAD-Engine (KCE) - A knowledge-driven CAD automation engine.

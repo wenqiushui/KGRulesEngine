@@ -1,0 +1,13 @@
+{
+  "event_id": "test_run_c9db6d6f-00f6-4460-8cea-b188e5fc4b16_system_event_Succeeded_20250611002144326843",
+  "run_id": "test_run_c9db6d6f-00f6-4460-8cea-b188e5fc4b16",
+  "timestamp": "2025-06-11T00:21:44.326865",
+  "event_type": "InitialStateLoad",
+  "operation_uri": null,
+  "status": "Succeeded",
+  "inputs": {
+    "graph_size": 2
+  },
+  "outputs": null,
+  "message": "Initial state loaded into KL."
+}

@@ -1,0 +1,18 @@
+{
+  "event_id": "test_run_25d5e910-4401-4a58-9ab7-0b1235c1edf5_InitializeRearWallNode_Failed_20250611002402350938",
+  "run_id": "test_run_25d5e910-4401-4a58-9ab7-0b1235c1edf5",
+  "timestamp": "2025-06-11T00:24:02.350960",
+  "event_type": "NodeExecutionInPlanningFailed",
+  "operation_uri": "http://example.com/ns#InitializeRearWallNode",
+  "status": "Failed",
+  "inputs": {
+    "node_execution_result": {
+      "status": "failure",
+      "message": "Error executing plan step 1 (node <http://example.com/ns#InitializeRearWallNode>): Error executing script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode>: Script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode> failed with exit code 1. Stderr: Error: Invalid input value - invalid literal for int() with base 10: ''. Stderr: Error: Invalid input value - invalid literal for int() with base 10: ''\nTraceback (most recent call last):\n  File \"/app/kce_core/execution_layer/node_executor.py\", line 205, in _execute_python_script\n    raise RuntimeError(error_message)\nRuntimeError: Script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode> failed with exit code 1. Stderr: Error: Invalid input value - invalid literal for int() with base 10: ''\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/app/kce_core/execution_layer/plan_executor.py\", line 94, in execute_plan\n    output_rdf_graph = self.node_executor.execute_node(\n  File \"/app/kce_core/execution_layer/node_executor.py\", line 287, in execute_node\n    script_outputs = self._execute_python_script(script_path, node_uri_str, arg_style_uri, input_param_defs, current_input_graph)\n  File \"/app/kce_core/execution_layer/node_executor.py\", line 221, in _execute_python_script\n    raise RuntimeError(error_message) from e\nRuntimeError: Error executing script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode>: Script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode> failed with exit code 1. Stderr: Error: Invalid input value - invalid literal for int() with base 10: ''. Stderr: Error: Invalid input value - invalid literal for int() with base 10: ''\n",
+      "run_id": "test_run_25d5e910-4401-4a58-9ab7-0b1235c1edf5",
+      "failed_step_index": 0
+    }
+  },
+  "outputs": null,
+  "message": "Execution of node <http://example.com/ns#InitializeRearWallNode> failed during planning."
+}

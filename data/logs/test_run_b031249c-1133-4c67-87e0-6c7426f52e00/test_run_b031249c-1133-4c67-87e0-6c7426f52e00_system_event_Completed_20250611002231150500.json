@@ -1,0 +1,11 @@
+{
+  "event_id": "test_run_b031249c-1133-4c67-87e0-6c7426f52e00_system_event_Completed_20250611002231150500",
+  "run_id": "test_run_b031249c-1133-4c67-87e0-6c7426f52e00",
+  "timestamp": "2025-06-11T00:22:31.150531",
+  "event_type": "InitialReasoning",
+  "operation_uri": null,
+  "status": "Completed",
+  "inputs": null,
+  "outputs": null,
+  "message": "Initial reasoning complete."
+}

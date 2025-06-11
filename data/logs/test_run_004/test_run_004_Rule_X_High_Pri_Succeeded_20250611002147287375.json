@@ -1,0 +1,15 @@
+{
+  "event_id": "test_run_004_Rule_X_High_Pri_Succeeded_20250611002147287375",
+  "run_id": "test_run_004",
+  "timestamp": "2025-06-11T00:21:47.287429",
+  "event_type": "RuleConsequentApplied",
+  "operation_uri": "http://example.com/ns#Rule_X_High_Pri",
+  "status": "Succeeded",
+  "inputs": {
+    "consequent_query": "PREFIX ex: <http://example.com/ns#> DELETE DATA { ex:priTest ex:status 'start' . }; INSERT DATA { ex:priTest ex:status 'X-priority-wins' . }"
+  },
+  "outputs": {
+    "knowledge_updated": true
+  },
+  "message": "Rule <http://example.com/ns#Rule_X_High_Pri> consequent applied."
+}

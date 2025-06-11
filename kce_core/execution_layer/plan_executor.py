@@ -84,13 +84,18 @@ class PlanExecutor(IPlanExecutor):
 
             try:
                 if operation_type == "node":
-                    node_input_context_graph = rdflib.Graph()
+                    # The NodeExecutor is responsible for finding the specific inputs it needs
+                    # from the main knowledge graph based on the node's parameter definitions.
+                    # Thus, we pass the main graph from the knowledge_layer.
+                    # A more refined approach might involve the Planner preparing a minimal
+                    # input graph, but this is sufficient for current NodeExecutor logic.
+                    current_overall_graph = knowledge_layer.get_graph() # Or knowledge_layer.graph if directly accessible
 
                     output_rdf_graph = self.node_executor.execute_node(
-                        node_uri=operation_uri,
+                        node_uri_str=operation_uri,
                         run_id=run_id,
-                        knowledge_layer=knowledge_layer,
-                        current_input_graph=node_input_context_graph
+                        knowledge_layer=knowledge_layer, # NodeExecutor uses this for definitions, not instance data for inputs
+                        current_input_graph=current_overall_graph # This graph should contain instance data
                     )
 
                     if output_rdf_graph and len(output_rdf_graph) > 0:

@@ -29,7 +29,11 @@ nodes:
       type: "PythonScript"
       # Path relative to this YAML file's directory OR --base-script-path
       script_path: "../scripts/init_rear_wall.py"
-      argument_passing_style: "commandline" # Script will get inputs as command line args
+      kce:argumentPassingStyle: "kce:CommandLineArguments" # Script will get inputs as command line args
+      kce:parameterOrder:
+        - "car_internal_width"
+        - "car_internal_height"
+        - "workflow_instance_uri"
 
   # Node 2: Calculate detailed dimensions for a single panel (thickness, bending height, final width)
   # This node might be called multiple times, once for each panel, or the script handles all panels.
@@ -54,7 +58,9 @@ nodes:
     invocation:
       type: "PythonScript"
       script_path: "../scripts/calculate_panel_details.py"
-      argument_passing_style: "commandline"
+      kce:argumentPassingStyle: "kce:CommandLineArguments"
+      kce:parameterOrder:
+        - "rear_wall_assembly_uri"
 
   # Node 3: Calculate Bolt Holes for panels
   # Assumes panel height is already set on :ElevatorPanel instances.
@@ -76,7 +82,9 @@ nodes:
     invocation:
       type: "PythonScript"
       script_path: "../scripts/calculate_bolt_holes.py"
-      argument_passing_style: "commandline"
+      kce:argumentPassingStyle: "kce:CommandLineArguments"
+      kce:parameterOrder:
+        - "rear_wall_assembly_uri"
 
   # Node 4: Determine Stiffeners for panels
   # Assumes panel width is already set on :ElevatorPanel instances.
@@ -98,7 +106,9 @@ nodes:
     invocation:
       type: "PythonScript"
       script_path: "../scripts/determine_stiffeners.py"
-      argument_passing_style: "commandline"
+      kce:argumentPassingStyle: "kce:CommandLineArguments"
+      kce:parameterOrder:
+        - "rear_wall_assembly_uri"
 
   # Node 5: Composite Node to calculate costs for a single panel
   # This demonstrates a composite node. In a real scenario, the Python script for costs
@@ -127,7 +137,9 @@ nodes:
     invocation:
       type: "PythonScript"
       script_path: "../scripts/calculate_panel_costs.py" # This script would iterate through panels
-      argument_passing_style: "commandline"
+      kce:argumentPassingStyle: "kce:CommandLineArguments"
+      kce:parameterOrder:
+        - "rear_wall_assembly_uri"
 
   # Node 6: Sum Assembly Costs
   - id: "ex:SumAssemblyCostsNode"
@@ -148,7 +160,9 @@ nodes:
     invocation:
       type: "PythonScript"
       script_path: "../scripts/sum_assembly_costs.py"
-      argument_passing_style: "commandline"
+      kce:argumentPassingStyle: "kce:CommandLineArguments"
+      kce:parameterOrder:
+        - "rear_wall_assembly_uri"
 
   # --- Example of a Composite Node (Conceptual for Panel Cost - can be simplified for MVP) ---
   # This demonstrates the structure but might be overly complex if CalculateAllPanelCostsNode is sufficient.

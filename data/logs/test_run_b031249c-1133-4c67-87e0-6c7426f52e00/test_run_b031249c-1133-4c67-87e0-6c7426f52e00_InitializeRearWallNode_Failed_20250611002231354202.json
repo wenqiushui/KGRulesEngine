@@ -1,0 +1,18 @@
+{
+  "event_id": "test_run_b031249c-1133-4c67-87e0-6c7426f52e00_InitializeRearWallNode_Failed_20250611002231354202",
+  "run_id": "test_run_b031249c-1133-4c67-87e0-6c7426f52e00",
+  "timestamp": "2025-06-11T00:22:31.354227",
+  "event_type": "NodeExecutionInPlanningFailed",
+  "operation_uri": "http://example.com/ns#InitializeRearWallNode",
+  "status": "Failed",
+  "inputs": {
+    "node_execution_result": {
+      "status": "failure",
+      "message": "Error executing plan step 1 (node <http://example.com/ns#InitializeRearWallNode>): Error executing script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode>: Script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode> failed with exit code 1. Stderr: Usage: python /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py <car_internal_width> <car_internal_height> <workflow_instance_uri>. Stderr: Usage: python /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py <car_internal_width> <car_internal_height> <workflow_instance_uri>\nTraceback (most recent call last):\n  File \"/app/kce_core/execution_layer/node_executor.py\", line 205, in _execute_python_script\n    raise RuntimeError(error_message)\nRuntimeError: Script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode> failed with exit code 1. Stderr: Usage: python /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py <car_internal_width> <car_internal_height> <workflow_instance_uri>\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/app/kce_core/execution_layer/plan_executor.py\", line 89, in execute_plan\n    output_rdf_graph = self.node_executor.execute_node(\n  File \"/app/kce_core/execution_layer/node_executor.py\", line 287, in execute_node\n    script_outputs = self._execute_python_script(script_path, node_uri_str, arg_style_uri, input_param_defs, current_input_graph)\n  File \"/app/kce_core/execution_layer/node_executor.py\", line 221, in _execute_python_script\n    raise RuntimeError(error_message) from e\nRuntimeError: Error executing script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode>: Script /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py for node <http://example.com/ns#InitializeRearWallNode> failed with exit code 1. Stderr: Usage: python /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py <car_internal_width> <car_internal_height> <workflow_instance_uri>. Stderr: Usage: python /app/examples/elevator_panel_simplified/scripts/init_rear_wall.py <car_internal_width> <car_internal_height> <workflow_instance_uri>\n",
+      "run_id": "test_run_b031249c-1133-4c67-87e0-6c7426f52e00",
+      "failed_step_index": 0
+    }
+  },
+  "outputs": null,
+  "message": "Execution of node <http://example.com/ns#InitializeRearWallNode> failed during planning."
+}

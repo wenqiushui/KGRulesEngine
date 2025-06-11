@@ -3,7 +3,7 @@
 import logging # Keep for basic logging types if needed elsewhere
 
 # --- Package Information ---
-__version__ = "0.3.0-refactored" # KCE Refactored version
+__version__ = "0.3.0" # KCE Refactored version
 __author__ = "KCE Development Team"
 __email__ = "dev@kce.example.com"
 
