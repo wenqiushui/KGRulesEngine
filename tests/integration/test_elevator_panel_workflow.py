@@ -12,9 +12,12 @@ from rdflib import URIRef, Literal, XSD, Namespace # Added Namespace
 # New KCE Core Imports
 from kce_core.interfaces import (
     IKnowledgeLayer, IDefinitionTransformationLayer, IPlanner,
-    IPlanExecutor, IRuleEngine, IRuntimeStateLogger, # Added IRuntimeStateLogger
+    IPlanExecutor, IRuleEngine, IRuntimeStateLogger,
     TargetDescription, RDFGraph, ExecutionResult # Key data structures
 )
+# Import specific namespaces and utilities needed for graph manipulation
+from kce_core import KCE, EX, RDF, RDFS, XSD # Make sure XSD is imported if used for literals
+from kce_core.common.utils import create_rdf_graph_from_json_ld_dict, generate_instance_uri, KCE_NS_STR, EX_NS_STR
 from kce_core.knowledge_layer.rdf_store.store_manager import RdfStoreManager
 from kce_core.definition_transformation_layer.loader import DefinitionLoader
 from kce_core.execution_layer.node_executor import NodeExecutor
@@ -114,6 +117,8 @@ def test_elevator_panel_scenario_1(kce_test_environment_components):
     planner: IPlanner = kce_test_environment_components["planner"]
     ple: IPlanExecutor = kce_test_environment_components["plan_executor"]
     re: IRuleEngine = kce_test_environment_components["rule_engine"]
+    # Assuming runtime_logger is also in components if needed for direct logging here
+    # runtime_logger: IRuntimeStateLogger = kce_test_environment_components["runtime_logger"]
 
     if not SCENARIO1_TARGET_FILE.exists(): pytest.fail(f"Scenario target file not found: {SCENARIO1_TARGET_FILE}")
     target_desc_data = load_json_file(str(SCENARIO1_TARGET_FILE))
@@ -124,12 +129,63 @@ def test_elevator_panel_scenario_1(kce_test_environment_components):
     with open(SCENARIO1_PARAMS_FILE, 'r', encoding='utf-8') as f: initial_state_json_str = f.read()
 
     run_id = f"test_run_{uuid.uuid4()}"
-    # The base_uri for problem instances should be distinct for each run or problem to avoid clashes.
-    # Using a UUID in the path or a run-specific segment.
-    instance_base_uri = f"http://example.com/instances/{run_id}/problem_data#" # Added '#' for proper URI construction
+    # The base_uri for problem instances should be distinct for each run or problem.
+    problem_instance_uri = URIRef(f"http://example.com/instances/{run_id}/problemInstance")
 
-    initial_state_rdf: RDFGraph = dl.load_initial_state_from_json(initial_state_json_str, base_uri=instance_base_uri)
-    kce_logger.info(f"Loaded initial state for run {run_id} ({len(initial_state_rdf)} triples).")
+    # Create initial_state_graph with kce:ProblemInstance and parameters
+    initial_state_rdf = RDFGraph()
+    initial_state_rdf.bind("kce", KCE)
+    initial_state_rdf.bind("ex", EX)
+    initial_state_rdf.add((problem_instance_uri, RDF.type, KCE.ProblemInstance))
+
+    params_data = json.loads(initial_state_json_str)
+    json_context = params_data.get("@context", {})
+
+    for key, value in params_data.items():
+        if key.startswith("@"):
+            continue
+
+        # Expand CURIEs like "ex:carInternalWidth" to full URIs
+        key_uri: Optional[URIRef] = None
+        if ":" in key:
+            prefix, local_name = key.split(":", 1)
+            if prefix in json_context and isinstance(json_context[prefix], str):
+                key_uri = URIRef(json_context[prefix] + local_name)
+            elif prefix == "ex": # Fallback for common prefix if not in context string
+                 key_uri = EX[local_name]
+            elif prefix == "kce":
+                 key_uri = KCE[local_name]
+            # Add more known prefixes if necessary or rely on a robust CURIE expansion utility
+
+        if not key_uri: # If not a CURIE or expansion failed, treat as full URI or skip
+            try:
+                key_uri = URIRef(key) # Assume it's a full URI if no prefix
+            except:
+                kce_logger.warning(f"Could not resolve parameter key '{key}' to URI, skipping.")
+                continue
+
+        # Convert value to RDF Literal or URIRef (basic type inference)
+        rdf_value: Union[Literal, URIRef]
+        if isinstance(value, bool):
+            rdf_value = Literal(value, datatype=XSD.boolean)
+        elif isinstance(value, int):
+            rdf_value = Literal(value, datatype=XSD.integer)
+        elif isinstance(value, float):
+            rdf_value = Literal(value, datatype=XSD.double)
+        elif isinstance(value, str):
+            if value.startswith("http://") or value.startswith("https://") or value.startswith("urn:"):
+                rdf_value = URIRef(value)
+            else: # Default to string literal
+                rdf_value = Literal(value)
+        else: # For other types, convert to string literal
+            rdf_value = Literal(str(value))
+
+        initial_state_rdf.add((problem_instance_uri, key_uri, rdf_value))
+
+    kce_logger.info(f"Constructed initial state for run {run_id} with ProblemInstance <{problem_instance_uri}> ({len(initial_state_rdf)} triples).")
+    if kce_logger.isEnabledFor(logging.DEBUG):
+        kce_logger.debug("Initial state graph (Turtle):")
+        kce_logger.debug(initial_state_rdf.serialize(format="turtle"))
 
     kce_logger.info(f"Invoking Planner for target: {target_description.get('target_description_label', 'N/A')}")
     execution_result: ExecutionResult = planner.solve(
@@ -153,12 +209,7 @@ def test_elevator_panel_scenario_1(kce_test_environment_components):
     # This query assumes that the 'InitializeRearWallNode' (or similar) creates an assembly
     # and links it via 'ex:createdRearWallAssemblyURI' to the initial parameter context.
     # The initial parameter context ID is 'ex:ScenarioParameters_Scenario1' from scenario1_params.json
-    # which gets loaded under instance_base_uri.
-
-    # Note: The original test had a fixed context URI. Here, it's dynamic with run_id.
-    # For a robust query, the link between initial params and output assembly needs to be clear.
-    # If InitializeRearWallNode sets ex:createdRearWallAssemblyURI on the @id from scenario1_params.json, we can query it.
-    initial_params_instance_uri = URIRef(instance_base_uri + "ScenarioParameters_Scenario1")
+    # which gets loaded under problem_instance_uri.
 
     query_final_cost = f"""
     PREFIX ex: <{EX}>

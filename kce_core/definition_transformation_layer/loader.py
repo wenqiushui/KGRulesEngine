@@ -85,7 +85,7 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                         param_name_to_uri_map[param_name] = param_uri
 
 
-        # Use "invocation" from YAML, mapping to "implementation" conceptually for some parts
+        # Use "invocation" from YAML (reverted to "invocation" to match example YAMLs for integration tests)
         if "invocation" in data:
             impl_data = data["invocation"]
 
@@ -127,7 +127,7 @@ class DefinitionLoader(IDefinitionTransformationLayer):
                 g.add((impl_uri, KCE.invocationType, invocation_type_uri))
 
             # Store scriptPath on impl_uri
-            original_script_path = impl_data.get("script_path")
+            original_script_path = impl_data.get("script_path") # Reverted to "script_path" to match example YAMLs
             if original_script_path:
                 yaml_file_path_obj = Path(file_path_str)
                 yaml_dir = yaml_file_path_obj.parent

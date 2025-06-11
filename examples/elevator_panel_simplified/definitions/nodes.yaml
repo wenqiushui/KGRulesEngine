@@ -19,12 +19,21 @@ nodes:
         maps_to_rdf_property: "kce:instanceURI" # Convention for script to know its context
         data_type: "anyURI" # rdflib will treat this as URIRef
         is_required: true
+    kce:hasPrecondition: |
+      PREFIX ex: <http://example.com/ns#>
+      ASK WHERE {
+        # This node should only run if it has not yet been marked as initialized.
+        FILTER NOT EXISTS { ex:InitializeRearWallNode ex:initializationComplete true . }
+      }
     outputs:
-      # This script will create :RearWallAssembly and :ElevatorPanel instances in the RDF graph.
-      # It might output the URI of the created :RearWallAssembly for subsequent nodes.
-      - name: "rear_wall_assembly_uri"
-        maps_to_rdf_property: "ex:createdRearWallAssemblyURI" # Property on workflow_instance_uri
+      - name: "rear_wall_assembly_uri_output" # From script
+        maps_to_rdf_property: "ex:createdRearWallAssemblyURI"
         data_type: "anyURI"
+      - name: "initialization_complete_flag" # Fixed output to mark completion
+        maps_to_rdf_property: "ex:initializationComplete"
+        kce:hasFixedValue: true # This will be treated as a boolean true by the loader/executor
+        data_type: "xsd:boolean"
+        # kce:nodeContextUri: "ex:InitializeRearWallNode" # Subject is this node itself (default)
     invocation:
       type: "PythonScript"
       # Path relative to this YAML file's directory OR --base-script-path
@@ -49,6 +58,18 @@ nodes:
         is_required: true
       # The script will query the RDF store for carInternalHeight/Width associated with the assembly
       # and find all :ElevatorPanel instances linked via ex:hasPanelPart.
+    kce:hasPrecondition: |
+      PREFIX kce: <http://kce.com/ontology/core#>
+      PREFIX ex: <http://example.com/ns#>
+      PREFIX domain: <http://kce.com/example/elevator_panel#>
+      ASK WHERE {
+        # ex:InitializeRearWallNode is the subject that has ex:createdRearWallAssemblyURI property.
+        ex:InitializeRearWallNode ex:createdRearWallAssemblyURI ?assemblyUri .
+        ?assemblyUri a domain:RearWallAssembly .
+        # This node should only run if its main output flag (ex:panelDetailsCalculated)
+        # has not yet been set on the assembly for this run.
+        FILTER NOT EXISTS { ?assemblyUri ex:panelDetailsCalculated true . }
+      }
     outputs:
       # This script modifies existing :ElevatorPanel instances by adding:
       # ex:panelThickness, ex:bendingHeight, ex:panelWidth
@@ -74,6 +95,15 @@ nodes:
         data_type: "anyURI"
         is_required: true
       # Script queries for all panels linked to the assembly and their heights.
+    kce:hasPrecondition: |
+      PREFIX kce: <http://kce.com/ontology/core#>
+      PREFIX ex: <http://example.com/ns#>
+      PREFIX domain: <http://kce.com/example/elevator_panel#>
+      ASK WHERE {
+        ex:InitializeRearWallNode ex:createdRearWallAssemblyURI ?assemblyUri .
+        ?assemblyUri ex:panelDetailsCalculated true . # Depends on CalculatePanelDetailsNode
+        FILTER NOT EXISTS { ?assemblyUri ex:boltHolesCalculated true . }
+      }
     outputs:
       # Modifies :ElevatorPanel instances by adding ex:boltHoleCount and ex:boltHoleDiameter
       - name: "bolt_holes_calculated_flag"
@@ -98,6 +128,17 @@ nodes:
         data_type: "anyURI"
         is_required: true
       # Script queries for all panels linked to the assembly and their widths.
+    kce:hasPrecondition: |
+      PREFIX kce: <http://kce.com/ontology/core#>
+      PREFIX ex: <http://example.com/ns#>
+      PREFIX domain: <http://kce.com/example/elevator_panel#>
+      ASK WHERE {
+        ex:InitializeRearWallNode ex:createdRearWallAssemblyURI ?assemblyUri .
+        # This node might depend on panel details like width if stiffeners are based on width.
+        # Assuming panel details (which includes width calculation) should be done first.
+        ?assemblyUri ex:panelDetailsCalculated true .
+        FILTER NOT EXISTS { ?assemblyUri ex:stiffenersDetermined true . }
+      }
     outputs:
       # Modifies :ElevatorPanel instances by adding ex:stiffenerCount
       - name: "stiffeners_determined_flag"
@@ -128,6 +169,16 @@ nodes:
         data_type: "anyURI"
         is_required: true
       # Script queries for all panels and their relevant properties (thickness, width, hole count, stiffener count)
+    kce:hasPrecondition: |
+      PREFIX kce: <http://kce.com/ontology/core#>
+      PREFIX ex: <http://example.com/ns#>
+      PREFIX domain: <http://kce.com/example/elevator_panel#>
+      ASK WHERE {
+        ex:InitializeRearWallNode ex:createdRearWallAssemblyURI ?assemblyUri .
+        ?assemblyUri ex:boltHolesCalculated true .    # Depends on CalculateBoltHolesNode
+        ?assemblyUri ex:stiffenersDetermined true . # Depends on DetermineStiffenersNode
+        FILTER NOT EXISTS { ?assemblyUri ex:panelCostsCalculated true . }
+      }
     outputs:
       # Modifies :ElevatorPanel instances by adding:
       # ex:materialCost, ex:processingCost, ex:panelTotalCost
@@ -152,6 +203,16 @@ nodes:
         data_type: "anyURI"
         is_required: true
       # Script queries for all panels' ex:panelTotalCost linked to the assembly
+    kce:hasPrecondition: |
+      PREFIX kce: <http://kce.com/ontology/core#>
+      PREFIX ex: <http://example.com/ns#>
+      PREFIX domain: <http://kce.com/example/elevator_panel#>
+      ASK WHERE {
+        ex:InitializeRearWallNode ex:createdRearWallAssemblyURI ?assemblyUri .
+        ?assemblyUri ex:panelCostsCalculated true . # Depends on CalculateAllPanelCostsNode
+        # This is the final node for cost calculation part of the goal.
+        FILTER NOT EXISTS { ?assemblyUri ex:assemblyCostCalculated true . }
+      }
     outputs:
       # Modifies :RearWallAssembly instance by adding ex:assemblyTotalCost
       - name: "assembly_cost_calculated_flag"

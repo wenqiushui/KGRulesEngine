@@ -127,6 +127,28 @@ class Planner(IPlanner):
         else:
             self._log_event(run_id, "InitialRuleApplication", None, "Completed", None, {"rules_applied_in_cycle": False}, "Initial rules applied cycle resulted in no changes.", knowledge_layer)
 
+        # Add the workflow instance URI to the knowledge graph
+        # This makes kce:instanceURI available for nodes that require it.
+        # It assumes the initial_state_graph contains one kce:ProblemInstance which is the subject.
+        problem_instance_query = f"SELECT ?instance_uri WHERE {{ ?instance_uri rdf:type <{KCE.ProblemInstance}> . }} LIMIT 1"
+        query_results = knowledge_layer.execute_sparql_query(problem_instance_query)
+        workflow_instance_subject_uri: Optional[rdflib.URIRef] = None
+        if isinstance(query_results, list) and query_results:
+            if 'instance_uri' in query_results[0] and isinstance(query_results[0]['instance_uri'], rdflib.URIRef):
+                workflow_instance_subject_uri = query_results[0]['instance_uri']
+
+        if workflow_instance_subject_uri:
+            instance_uri_graph = rdflib.Graph()
+            # The value of kce:instanceURI is the URI of the workflow/problem instance itself.
+            instance_uri_graph.add((workflow_instance_subject_uri, KCE.instanceURI, workflow_instance_subject_uri))
+            knowledge_layer.add_graph(instance_uri_graph)
+            self._log_event(run_id, "WorkflowInstanceURIInitialization", str(workflow_instance_subject_uri), "Succeeded",
+                            {"triple_added": f"({workflow_instance_subject_uri}, kce:instanceURI, {workflow_instance_subject_uri})"},
+                            None, "Added kce:instanceURI to the knowledge graph.", knowledge_layer)
+        else:
+            self._log_event(run_id, "WorkflowInstanceURIInitialization", None, "Failed",
+                            {"reason": "Could not find kce:ProblemInstance in the initial state graph."},
+                            None, "Failed to add kce:instanceURI; kce:ProblemInstance not found.", knowledge_layer)
 
         current_plan_steps: ExecutionPlan = [] # Stores the sequence of executed steps
         for depth in range(MAX_PLANNING_DEPTH):

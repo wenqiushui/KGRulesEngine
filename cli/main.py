@@ -10,18 +10,19 @@ from typing import Optional, List, Dict, Any # Added for type hints
 from kce_core import (
     RdfStoreManager as StoreManager,
     DefinitionLoader,
-    PlanExecutor as WorkflowExecutor,      # Correct: Alias PlanExecutor
+    PlanExecutor, # Renaming to WorkflowExecutor was confusing contextually
     NodeExecutor,
-    RuleEngine as RuleEvaluator,          # Correct: Alias RuleEngine
-    RuntimeStateLogger as ProvenanceLogger, # Correct: Alias RuntimeStateLogger
-    # sparql_queries, # This was incorrect, imported below directly
+    RuleEngine, # Renaming to RuleEvaluator was confusing contextually
+    Planner,    # Added Planner
+    RuntimeStateLogger as ProvenanceLogger,
     kce_logger,
     KCEError, DefinitionError, RDFStoreError, ExecutionError,
     get_kce_version,
-    KCE, EX # Example namespaces for parameter keys
+    KCE, EX, # Example namespaces for parameter keys
+    generate_instance_uri, create_rdf_graph_from_json_ld_dict # Added utils
 )
-from kce_core.common.utils import load_json_file # load_json_string is not defined in utils.py
-from kce_core.knowledge_layer.rdf_store import sparql_queries # Corrected import for sparql_queries
+from kce_core.common.utils import load_json_file, to_uriref, KCE_NS_STR, EX_NS_STR # Ensure to_uriref and namespaces are available
+from kce_core.knowledge_layer.rdf_store import sparql_queries
 
 # --- CLI Configuration ---
 DEFAULT_DB_PATH = "kce_store.sqlite"
@@ -34,7 +35,11 @@ class CliContext:
         self.db_path: Optional[Path] = None
         self.store_manager: Optional[StoreManager] = None
         self.definition_loader: Optional[DefinitionLoader] = None
-        self.workflow_executor: Optional[WorkflowExecutor] = None
+        self.plan_executor: Optional[PlanExecutor] = None # Renamed from workflow_executor
+        self.planner: Optional[Planner] = None # Added Planner instance
+        self.rule_engine: Optional[RuleEngine] = None # Added RuleEngine instance
+        self.node_executor: Optional[NodeExecutor] = None # Added NodeExecutor instance
+        self.provenance_logger: Optional[ProvenanceLogger] = None # Added ProvenanceLogger instance
         self.verbose: bool = False
         self.base_script_path: Optional[Path] = None
 
@@ -82,16 +87,15 @@ def cli(ctx: CliContext, db_path: Optional[str], in_memory: bool, base_script_pa
 
     try:
         ctx.store_manager = StoreManager(db_path=ctx.db_path)
-        # Initialize other core components that depend on store_manager
-        prov_logger = ProvenanceLogger(ctx.store_manager)
-        node_exec = NodeExecutor(ctx.store_manager, prov_logger)
-        rule_eval = RuleEvaluator(ctx.store_manager, prov_logger) # Pass prov_logger here
-
+        ctx.provenance_logger = ProvenanceLogger(ctx.store_manager)
+        ctx.node_executor = NodeExecutor() # NodeExecutor takes no args in constructor
+        ctx.rule_engine = RuleEngine(ctx.store_manager, ctx.provenance_logger) # RuleEngine needs KL and optionally logger
+        ctx.plan_executor = PlanExecutor(ctx.node_executor, ctx.provenance_logger, ctx.rule_engine)
+        ctx.planner = Planner(runtime_state_logger=ctx.provenance_logger)
         ctx.definition_loader = DefinitionLoader(ctx.store_manager, base_path_for_relative_scripts=ctx.base_script_path)
-        ctx.workflow_executor = WorkflowExecutor(ctx.store_manager, node_exec, rule_eval, prov_logger)
 
     except KCEError as e:
-        kce_logger.error(f"Failed to initialize KCE components: {e}")
+        kce_logger.error(f"Failed to initialize KCE components: {e}", exc_info=verbose)
         click.echo(f"Error: Failed to initialize KCE components: {e}", err=True)
         sys.exit(1)
     except Exception as e:
@@ -184,14 +188,31 @@ def load_defs(ctx: CliContext, yaml_path: str, no_reasoning: bool):
 def run_workflow(ctx: CliContext, workflow_uri_str: str,
                  params_json: Optional[str], params_file: Optional[str],
                  context_uri: Optional[str]):
-    """Executes a KCE workflow."""
-    if not ctx.workflow_executor:
-        click.echo("Error: WorkflowExecutor not initialized.", err=True)
+    """Executes a KCE workflow using the Planner."""
+    if not all([ctx.planner, ctx.store_manager, ctx.plan_executor, ctx.rule_engine, ctx.provenance_logger]):
+        click.echo("Error: Core KCE components (Planner, StoreManager, PlanExecutor, RuleEngine, ProvenanceLogger) not initialized.", err=True)
         sys.exit(1)
 
-    workflow_uri = to_uriref(workflow_uri_str, base_ns=EX) # Assume EX if no prefix
+    workflow_uri_rdf = to_uriref(workflow_uri_str, base_ns=EX) # Assume EX if no prefix
+    if not workflow_uri_rdf:
+        click.echo(f"Error: Invalid workflow URI: {workflow_uri_str}", err=True)
+        sys.exit(1)
 
-    actual_params_json_str: Optional[str] = None
+    # Determine Run ID (Instance Context URI)
+    run_id_uri: rdflib.URIRef
+    if context_uri:
+        run_id_uri_temp = to_uriref(context_uri, base_ns=KCE["run/"]) # Example base for runs
+        if not run_id_uri_temp:
+            click.echo(f"Error: Invalid context URI: {context_uri}", err=True)
+            sys.exit(1)
+        run_id_uri = run_id_uri_temp
+        click.echo(f"Using explicit Run ID (Context URI): <{run_id_uri}>")
+    else:
+        run_id_uri = generate_instance_uri(KCE_NS_STR + "run/", "workflow_instance")
+        click.echo(f"Generated Run ID (Context URI): <{run_id_uri}>")
+
+    # Load parameters
+    params_dict: Dict[str, Any] = {}
     if params_file:
         if params_json:
             click.echo("Warning: Both --params-json and --params-file provided. Using --params-file.", err=True)
@@ -202,36 +223,108 @@ def run_workflow(ctx: CliContext, workflow_uri_str: str,
             click.echo(f"Error reading params file {params_file}: {e}", err=True)
             sys.exit(1)
     elif params_json:
-        actual_params_json_str = params_json
+        try:
+            params_dict = json.loads(params_json)
+        except json.JSONDecodeError as e:
+            click.echo(f"Error decoding --params-json: {e}", err=True)
+            sys.exit(1)
 
-    context_uri_obj = to_uriref(context_uri, base_ns=EX) if context_uri else None
+    # Construct initial_state_graph
+    # Base JSON-LD structure for the problem instance
+    json_ld_data: Dict[str, Any] = {
+        "@context": {
+            "kce": KCE_NS_STR,
+            "ex": EX_NS_STR
+            # TODO: Dynamically add prefixes from params_dict keys if needed
+        },
+        "@id": str(run_id_uri),
+        "@type": "kce:ProblemInstance"
+    }
+    # Merge parameters into the JSON-LD structure
+    # Ensure parameter keys are valid CURIEs or full URIs for JSON-LD context or direct use
+    for k, v in params_dict.items():
+        json_ld_data[k] = v # Assumes keys in params_dict are suitable for JSON-LD
 
-    click.echo(f"Attempting to run workflow: <{workflow_uri}>")
-    if actual_params_json_str:
-        click.echo(f"With parameters: {actual_params_json_str[:200]}{'...' if actual_params_json_str and len(actual_params_json_str) > 200 else ''}")
-    if context_uri_obj:
-        click.echo(f"Using explicit context URI: <{context_uri_obj}>")
+    initial_state_graph = create_rdf_graph_from_json_ld_dict(json_ld_data, default_base_ns_str=str(KCE))
+    click.echo(f"Initial state graph created with {len(initial_state_graph)} triples for Run ID <{run_id_uri}>.")
+    if ctx.verbose:
+        click.echo("Initial state graph (Turtle):")
+        click.echo(initial_state_graph.serialize(format="turtle"))
+
+    # Retrieve TargetDescription for the workflow
+    # This assumes the workflow definition links to a TargetDescription via kce:hasTargetDescription
+    # And that TargetDescription has a kce:hasSparqlAskQuery.
+    target_query_sparql = f"""
+        PREFIX kce: <{KCE_NS_STR}>
+        SELECT ?ask_query
+        WHERE {{
+            <{workflow_uri_rdf}> kce:hasTargetDescription ?target_desc_uri .
+            ?target_desc_uri kce:hasSparqlAskQuery ?ask_query .
+        }}
+        LIMIT 1
+    """
+    try:
+        target_results = ctx.store_manager.query(target_query_sparql)
+        if not target_results or not isinstance(target_results, list) or not target_results[0].get('ask_query'):
+            click.echo(f"Error: Could not retrieve SPARQL ASK query for target description of workflow <{workflow_uri_rdf}>.", err=True)
+            sys.exit(1)
+
+        ask_query_str = str(target_results[0]['ask_query'])
+        target_description: Dict[str, str] = {"sparql_ask_query": ask_query_str}
+        click.echo(f"Target for workflow <{workflow_uri_rdf}>: ASK query retrieved.")
+        if ctx.verbose:
+            click.echo(f"Target ASK query: {ask_query_str}")
+
+    except KCEError as e:
+        kce_logger.error(f"Error retrieving target description for workflow <{workflow_uri_rdf}>: {e}", exc_info=ctx.verbose)
+        click.echo(f"Error retrieving target: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Attempting to run workflow: <{workflow_uri_rdf}> with Planner...")
 
     try:
-        success = ctx.workflow_executor.execute_workflow(
-            workflow_uri,
-            initial_parameters_json=actual_params_json_str,
-            instance_context_uri_override=context_uri_obj
+        # Ensure all components are not None before calling solve
+        if not ctx.planner or not ctx.store_manager or not ctx.plan_executor or not ctx.rule_engine:
+             click.echo("Critical Error: One or more KCE components are None before calling Planner.solve().", err=True)
+             sys.exit(1)
+
+        result: ExecutionResult = ctx.planner.solve(
+            target_description=target_description,
+            initial_state_graph=initial_state_graph,
+            knowledge_layer=ctx.store_manager, # StoreManager acts as IKnowledgeLayer
+            plan_executor=ctx.plan_executor,
+            rule_engine=ctx.rule_engine,
+            run_id=str(run_id_uri),
+            mode="auto" # Default mode
         )
-        if success:
-            click.echo(click.style(f"Workflow <{workflow_uri}> completed successfully.", fg="green"))
+
+        if result.get("status") == "success":
+            click.echo(click.style(f"Workflow <{workflow_uri_rdf}> completed successfully. Run ID: <{run_id_uri}>", fg="green"))
+            if ctx.verbose and result.get("plan_executed"):
+                click.echo("Plan Executed:")
+                for i, step in enumerate(result["plan_executed"]):
+                    click.echo(f"  Step {i+1}: Type='{step.get('operation_type')}', URI='{step.get('operation_uri')}'")
         else:
-            click.echo(click.style(f"Workflow <{workflow_uri}> failed.", fg="red"), err=True)
+            click.echo(click.style(f"Workflow <{workflow_uri_rdf}> failed. Run ID: <{run_id_uri}>. Message: {result.get('message', 'No message')}", fg="red"), err=True)
+            if ctx.verbose and result.get("plan_executed"):
+                click.echo("Partial Plan Executed before failure:")
+                for i, step in enumerate(result["plan_executed"]):
+                    click.echo(f"  Step {i+1}: Type='{step.get('operation_type')}', URI='{step.get('operation_uri')}'")
             sys.exit(1) # Exit with error code if workflow failed
+
     except KCEError as e:
-        kce_logger.error(f"Error running workflow <{workflow_uri}>: {e}", exc_info=ctx.verbose)
+        kce_logger.error(f"Error running workflow <{workflow_uri_rdf}> with Planner: {e}", exc_info=ctx.verbose)
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e: # Catch any unexpected errors during solve
+        kce_logger.error(f"Unexpected error running workflow <{workflow_uri_rdf}> with Planner: {e}", exc_info=True)
+        click.echo(f"Unexpected Error: {e}", err=True)
         sys.exit(1)
 
 
 @cli.command("query")
 @click.argument('sparql_query_or_file', type=str)
-@click.option('--format', 'output_format', type=click.Choice(['table', 'csv', 'json', 'xml', 'turtle'], case_sensitive=False),
+@click.option('--format', 'output_format', type=click.Choice(['table', 'csv', 'json', 'xml', 'json-ld', 'turtle', 'n3'], case_sensitive=False), # Added json-ld
               default='table', help="Output format for SELECT query results or graph serialization.")
 @pass_cli_context
 def query_store(ctx: CliContext, sparql_query_or_file: str, output_format: str):
@@ -287,14 +380,22 @@ def query_store(ctx: CliContext, sparql_query_or_file: str, output_format: str):
             click.echo(f"ASK Query Result: {result}")
 
         elif query_type_test_str.startswith("CONSTRUCT") or query_type_test_str.startswith("DESCRIBE"):
-            # These return a new graph. Serialize it.
-            result_graph = ctx.store_manager.graph.query(query_str) # rdflib query returns a ResultGraph
-            if output_format not in ['turtle', 'xml', 'json-ld', 'n3']: # Common graph formats
+            result_graph = ctx.store_manager.graph.query(query_str)
+            # Supported formats for rdflib's serialize: xml, n3, turtle, nt, pretty-xml, trix, rdfa, json-ld
+            supported_graph_formats = ['turtle', 'xml', 'json-ld', 'n3', 'nt', 'pretty-xml', 'trix']
+            if output_format not in supported_graph_formats:
                 click.echo(f"Unsupported graph serialization format '{output_format}'. Defaulting to turtle.")
                 output_format = 'turtle'
-            serialized_graph = result_graph.serialize(format=output_format)
-            click.echo(serialized_graph)
 
+            # For json-ld, provide a basic context map from graph namespaces
+            extra_args = {}
+            if output_format == 'json-ld':
+                json_ld_context = {pfx: str(ns_uri) for pfx, ns_uri in ctx.store_manager.graph.namespaces()}
+                extra_args['context'] = json_ld_context
+                extra_args['indent'] = 2 # Make it readable
+
+            serialized_graph = result_graph.serialize(format=output_format, **extra_args)
+            click.echo(serialized_graph)
         elif query_type_test_str.startswith("INSERT") or query_type_test_str.startswith("DELETE"):
             ctx.store_manager.update(query_str)
             click.echo("SPARQL UPDATE executed successfully.")
@@ -363,7 +464,7 @@ def show_log(ctx: CliContext, run_id_uri_str: str):
 
 
 if __name__ == '__main__':
-    # This allows running the CLI directly using `python -m kce_core.cli.main`
-    # or `python path/to/cli/main.py`
+    # This allows running the CLI directly using `python -m cli.main` (if kce_core is in PYTHONPATH)
+    # or `python path/to/cli/main.py` (if run from project root or kce_core is installed)
     # For a proper installable CLI, use setup.py entry_points.
     cli()

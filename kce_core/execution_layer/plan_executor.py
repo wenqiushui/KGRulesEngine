@@ -32,18 +32,36 @@ class PlanExecutor(IPlanExecutor):
         '''
         print(f"Executing plan for run_id: {run_id}. Plan has {len(plan)} steps.")
 
-        if initial_graph is not None and len(initial_graph) > 0:
-            knowledge_layer.add_graph(initial_graph, context_uri=rdflib.URIRef(f"urn:kce:run:{run_id}:initial_plan_data"))
+        # Prepare the graph to hold the workflow instance URI triple
+        graph_to_modify = initial_graph if initial_graph is not None else rdflib.Graph()
+
+        # Create the workflow instance URI triple
+        # Subject: A new URI representing the workflow execution context for this run
+        # Predicate: kce:instanceURI
+        # Object: The run_id, which serves as the workflow_instance_uri
+        workflow_context_uri = rdflib.URIRef(f"urn:kce:run:{run_id}:workflow_context")
+        graph_to_modify.add((workflow_context_uri, KCE.instanceURI, rdflib.Literal(run_id)))
+
+        # Add the modified or new graph to the knowledge layer
+        # If initial_graph was None, this adds the new graph with the triple.
+        # If initial_graph existed, this adds the (potentially) modified initial_graph.
+        # It's important that this graph is added *before* any node reads from the knowledge_layer.
+        # The context_uri here is for the initial set of data including the instance URI.
+        knowledge_layer.add_graph(graph_to_modify, context_uri=rdflib.URIRef(f"urn:kce:run:{run_id}:initial_plan_data_with_instance_uri"))
+
+
+        if len(graph_to_modify) > 0: # Check if graph_to_modify (either initial or new) has content
+            # knowledge_layer.add_graph(graph_to_modify, context_uri=rdflib.URIRef(f"urn:kce:run:{run_id}:initial_plan_data"))
             self.logger.log_event(
                 run_id=run_id,
                 event_type="PlanSegmentStart",
                 operation_uri=None,
                 status="Started",
-                inputs={"plan_step_count": len(plan), "initial_graph_size": len(initial_graph)},
+                inputs={"plan_step_count": len(plan), "initial_graph_size": len(graph_to_modify)},
                 outputs=None,
                 knowledge_layer=knowledge_layer
             )
-        else:
+        else: # This case should ideally not be hit if we always add the instanceURI triple
              self.logger.log_event(
                 run_id=run_id,
                 event_type="PlanSegmentStart",
@@ -92,7 +110,7 @@ class PlanExecutor(IPlanExecutor):
                     current_overall_graph = knowledge_layer.get_graph() # Or knowledge_layer.graph if directly accessible
 
                     output_rdf_graph = self.node_executor.execute_node(
-                        node_uri_str=operation_uri,
+                        node_uri=operation_uri,
                         run_id=run_id,
                         knowledge_layer=knowledge_layer, # NodeExecutor uses this for definitions, not instance data for inputs
                         current_input_graph=current_overall_graph # This graph should contain instance data

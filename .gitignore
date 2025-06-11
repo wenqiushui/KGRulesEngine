@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Project-specific
+kce_engine.egg-info/
+temp_merge/
+data/
